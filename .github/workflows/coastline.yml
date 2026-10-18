@@ -1,0 +1,45 @@
+# Hämtar exakta kustlinjer (land och öar) från OpenStreetMap och sparar dem i mappen coast/.
+# Körs manuellt: Actions → "Fetch coastline" → Run workflow. Tar ungefär 5–10 minuter.
+name: Fetch coastline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GDAL
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
+
+      - name: Download OpenStreetMap land polygons
+        run: |
+          curl -sSL --retry 3 -o land.zip https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip
+          unzip -q land.zip
+          ls -la land-polygons-split-4326
+
+      - name: Cut out Åland and the region
+        run: |
+          mkdir -p coast
+          SHP=land-polygons-split-4326/land_polygons.shp
+          # Åland med omnejd i full detalj (ca 2 m)
+          ogr2ogr -f GeoJSON -spat 19.0 59.7 21.4 60.6 -clipsrc 19.0 59.7 21.4 60.6 \
+            -simplify 0.00002 -lco COORDINATE_PRECISION=6 coast/aland.geojson "$SHP"
+          # hela spelområdet (Stockholms och Åbolands skärgårdar), lite förenklat (ca 15 m)
+          ogr2ogr -f GeoJSON -spat 17.4 59.15 22.7 60.85 -clipsrc 17.4 59.15 22.7 60.85 \
+            -simplify 0.00015 -lco COORDINATE_PRECISION=5 coast/region.geojson "$SHP"
+          gzip -9 -f coast/aland.geojson coast/region.geojson
+          ls -la coast
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add coast
+          git commit -m "Coastline data from OpenStreetMap (© OpenStreetMap contributors, ODbL)" || echo "No changes"
+          git push

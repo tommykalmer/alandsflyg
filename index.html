@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Ålandsflyg</title>
+<meta name="theme-color" content="#0b1116">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ålandsflyg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<!--BODY-->
+<canvas id="gl"></canvas>
+<div id="wxfog"></div>
+<canvas id="hud"></canvas>
+
+<div id="ui" hidden>
+  <div class="thr" id="thr" aria-label="Throttle">
+    <div class="track"><div class="fill" id="thrFill"></div></div>
+    <div class="knob" id="thrKnob">0</div>
+    <div class="lbl" id="thrLbl">THR</div>
+  </div>
+  <div class="stickzone" id="stickZone" aria-label="Control stick">
+    <div class="stickbase idle" id="stickBase"><div class="stickknob" id="stickKnob"></div></div>
+  </div>
+  <div class="topbar">
+    <button class="hb" id="bCam" aria-label="Change view">VIEW</button>
+    <button class="hb" id="bMap">MAP</button>
+    <button class="hb" id="bSound">SOUND</button>
+    <button class="hb" id="bPause" aria-label="Pause">❚❚</button>
+    <button class="hb" id="bMenu">MENU</button>
+  </div>
+  <div class="apbar">
+    <button class="hb" id="bAP" aria-label="Autopilot">AP</button>
+    <button class="hb" id="bWarp" aria-label="Time warp">▶ ×1</button>
+    <button class="hb" id="bJump">JUMP TO APPROACH</button>
+    <button class="hb" id="bInstr" hidden>INSTR</button>
+  </div>
+  <div class="bar">
+    <button class="hb" id="bFlapUp">FLAP −</button>
+    <button class="hb" id="bFlapDn">FLAP +</button>
+    <button class="hb" id="bGear">GEAR</button>
+    <button class="hb" id="bSpd">SPD BRK</button>
+    <button class="hb" id="bTrimU">TRIM ▲</button>
+    <button class="hb" id="bTrimD">TRIM ▼</button>
+    <button class="hb" id="bAssist" hidden>ASSIST</button>
+    <button class="hb" id="bBrake">BRAKE</button>
+    <button class="hb" id="bBelts">BELTS</button>
+    <button class="hb" id="bCabin">CABIN</button>
+  </div>
+  <div class="tut" id="tut" hidden><b id="tutStep"></b><span id="tutText"></span></div>
+  <canvas class="mini" id="mini" aria-label="Mini map, tap for the large map" hidden></canvas>
+  <div class="mappanel" id="mapPanel" hidden>
+    <canvas id="mapCanvas" aria-label="Chart plotter"></canvas>
+    <div class="maptools">
+      <button class="hb" id="mapClose" aria-label="Close map">✕</button>
+      <button class="hb" id="mapIn" aria-label="Zoom in">+</button>
+      <button class="hb" id="mapOut" aria-label="Zoom out">−</button>
+      <button class="hb on" id="mapCenter" aria-label="Follow aircraft">⌖</button>
+    </div>
+    <p class="mapinfo" id="mapInfo"></p>
+  </div>
+</div>
+
+<div class="overlay" id="loading">
+  <div class="loadbox">
+    <div class="brand"><b>EFMA</b><i>ÅLANDSFLYG</i></div>
+    <div class="loadtrack"><div id="loadBar"></div></div>
+    <p id="loadMsg">Starting…</p>
+  </div>
+</div>
+
+<div class="overlay" id="menu" hidden>
+  <div class="panel">
+    <div class="brand"><b>EFMA</b><i>ÅLANDSFLYG</i></div>
+    <p class="lede">Fly over Åland and the Stockholm and Turku archipelagos in a bush plane, a seaplane, a Fokker 50-style turboprop, an A320-style airliner or an air ambulance helicopter.</p>
+    <button class="go tutgo" id="tutGo" hidden>New here? Take the first flight <span>→</span></button>
+    <div class="tabs" role="tablist">
+      <button class="tab" id="tabFree" role="tab">Free flight</button>
+      <button class="tab" id="tabRoute" role="tab">Routes</button>
+      <button class="tab" id="tabMission" role="tab">Missions</button>
+    </div>
+    <div class="pane" id="freePane">
+      <h2 class="label">Aircraft</h2>
+      <div class="cards" id="acList"></div>
+      <h2 class="label">Start</h2>
+      <div class="chips" id="startList"></div>
+    </div>
+    <div class="pane" id="routePane" hidden>
+      <h2 class="label">Aircraft</h2>
+      <div class="chips" id="routeAcList"></div>
+      <h2 class="label">From</h2>
+      <div class="chips" id="fromList"></div>
+      <h2 class="label">To</h2>
+      <div class="chips" id="toList"></div>
+      <p class="brief" id="routeInfo"></p>
+    </div>
+    <div class="pane" id="windPane">
+      <h2 class="label">Wind</h2>
+      <div class="chips" id="windList"></div>
+      <h2 class="label">Weather</h2>
+      <div class="chips" id="wxList"></div>
+    </div>
+    <div class="pane" id="missionPane" hidden>
+      <div class="cards missions" id="missionList"></div>
+      <p class="brief" id="missionBrief"></p>
+    </div>
+    <h2 class="label">Difficulty</h2>
+    <div class="chips" id="diffList"></div>
+    <h2 class="label">Graphics</h2>
+    <div class="chips" id="qList"></div>
+    <h2 class="label">Time of day</h2>
+    <div class="chips" id="todList"></div>
+    <div class="row">
+      <button class="go" id="go">Fly <span>→</span></button>
+      <button class="chip" id="guide" aria-pressed="true">Landing guide on</button>
+      <button class="chip" id="miniOpt" aria-pressed="false">Mini map off</button>
+      <button class="ghost" id="fs">Full screen</button>
+    </div>
+    <div class="hint" id="rotHint" hidden>Turn your phone to landscape for the best experience.</div>
+    <details class="help">
+      <summary>How to fly</summary>
+      <dl>
+        <dt>Throttle</dt><dd>Drag the lever on the left. Keyboard: Shift / Ctrl or + / −</dd>
+        <dt>Stick</dt><dd>Put your thumb anywhere on the right and drag. Down = nose up. Keyboard: arrow keys or WASD</dd>
+        <dt>Rudder</dt><dd>Follows the stick automatically and steers the nose or tail wheel on the ground. Q / E for manual rudder</dd>
+        <dt>Buttons</dt><dd>Flaps F / V · Gear G · Speed brake U · Brakes B (hold) · Trim T / Y · View C · Map M · Mini map N · Seat belts K · Cabin announcement J · Sound L · Pause P · All keys H</dd>
+        <dt>Map</dt><dd>Drag to pan, pinch or +/− to zoom, ⌖ to follow the aircraft again.</dd>
+        <dt>Weather</dt><dd>Choose clear skies, scattered clouds, overcast, rain or low fog. Under the clouds it is grey and hazy; climb through the cloud layer and you come out in sunshine above a sea of clouds. Inside the cloud you see almost nothing, so fly by the instruments.</dd>
+        <dt>Wind</dt><dd>The windsocks at the fields and the wind turbines show the direction. The runway is chosen to face into the wind.</dd>
+        <dt>Bush plane</dt><dd>Tailwheel: lift the tail with a little forward stick and lift off at about 55 kt. Don't brake hard or it will nose over.</dd>
+        <dt>A320</dt><dd>Fly-by-wire: let go of the stick and the aircraft holds its flight path and bank. Rotate at about 140 kt and land with flaps FULL at around 135 kt.</dd>
+        <dt>Fokker 50</dt><dd>Twin turboprop with classic controls and trim. Take off with flaps 10, rotate at about 105 kt, land with flaps 35 at about 110 kt. Lower the gear in good time, it slows you down too.</dd>
+        <dt>Helicopter</dt><dd>With ASSIST on (default) the lever sets climb or descent: the middle (HOLD) keeps the height, up climbs and down descends, up to 2000 ft/min each way, and it flares by itself just above the ground so touchdowns are soft. The stick sets your speed: push forward to go faster, let go and it brakes by itself to a stop and hovers in place, even in wind; pull back to brake harder or back up. Sideways turns the nose in a hover and banks at speed. TRIM ▼/▲ sets a cruise speed it holds when you let go. With ASSIST off you fly it by hand: the lever is the raw collective (about 65% hovers) and the stick tilts the helicopter. Don't sink fast straight down without assist: in a vortex ring the rotor loses lift, so push forward to fly out of it.</dd>
+        <dt>Landing</dt><dd>With the landing guide on, a pink ring shows where to fly: steer the round flight path marker into the ring and keep it there all the way down, and you follow the glide path to a soft touchdown. The line above tells you how far above or below the glide path you are and what sink rate to fly. PAPI lights beside the runway: two white and two red means you're on the glide path.</dd>
+        <dt>Difficulty</dt><dd>Easy (default) levels the wings and flares for you in the last few hundred feet if you come in too steep, and tolerates firmer touchdowns. Realistic leaves it all to you.</dd>
+      </dl>
+      <p>Coastline: © OpenStreetMap contributors (ODbL), simplified and refined. Runways: OurAirports (public domain). Elevation and land cover are computed.</p>
+    </details>
+  </div>
+</div>
+
+<div class="overlay" id="keys" hidden>
+  <div class="crashbox keysbox">
+    <h2>Keyboard</h2>
+    <dl>
+      <dt>Throttle</dt><dd>+ / − or Shift / Ctrl (collective in the helicopter)</dd>
+      <dt>Stick</dt><dd>Arrow keys or W A S D (down/S = nose up)</dd>
+      <dt>Rudder</dt><dd>Q / E (pedals in the helicopter)</dd>
+      <dt>Flaps</dt><dd>F = more flap, V = less flap</dd>
+      <dt>Landing gear</dt><dd>G (A320 and Fokker 50)</dd>
+      <dt>Speed brake</dt><dd>U (A320)</dd>
+      <dt>Brakes</dt><dd>B or space (hold)</dd>
+      <dt>Trim</dt><dd>T = nose up, Y = nose down</dd>
+      <dt>Hover assist</dt><dd>V toggles it in the helicopter</dd>
+      <dt>Camera</dt><dd>C cycles outside view, cockpit and HUD</dd>
+      <dt>Map</dt><dd>M = large map, N = mini map</dd>
+      <dt>Cabin</dt><dd>K = seat belt sign (chime), J = cabin announcement</dd>
+      <dt>Autopilot</dt><dd>O toggles · . and , time warp (the helicopter autopilot flies to the mission target and hands over close to it)</dd>
+      <dt>Time of day</dt><dd>I changes the time</dd>
+      <dt>Other</dt><dd>P pause · L sound · R restart · Esc menu · H this list</dd>
+    </dl>
+    <div class="row"><button class="go" id="keysClose">Close</button></div>
+  </div>
+</div>
+
+<div class="overlay" id="crash" hidden>
+  <div class="crashbox">
+    <h2>Crash</h2>
+    <p id="crashWhy"></p>
+    <div class="row">
+      <button class="go" id="retry">Try again</button>
+      <button class="ghost" id="toMenu">Menu</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="result" hidden>
+  <div class="crashbox">
+    <h2 id="rTitle">Mission complete</h2>
+    <p id="rText"></p>
+    <ul id="rLines"></ul>
+    <div class="row">
+      <button class="go" id="rRetry">Fly again</button>
+      <button class="ghost" id="rFly">Keep flying</button>
+      <button class="ghost" id="rMenu">Menu</button>
+    </div>
+  </div>
+</div>
+<!--/BODY-->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/data.js"></script>
+<script src="js/world.js"></script>
+<script src="js/physics.js"></script>
+<script src="js/scene.js"></script>
+<script src="js/terrain.js"></script>
+<script src="js/daynight.js"></script>
+<script src="js/weather.js"></script>
+<script src="js/route.js"></script>
+<script src="js/cockpit.js"></script>
+<script src="js/missions.js"></script>
+<script src="js/map.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
