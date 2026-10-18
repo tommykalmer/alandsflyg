@@ -51,4 +51,4 @@ No build step is needed. Three.js r128 is loaded from cdnjs.
 
 ## Data
 
-The coastline comes from OpenStreetMap via geo-maps (© OpenStreetMap contributors, ODbL). It is simplified at the source and refined with noise to create skerries and bays. Runway coordinates come from OurAirports (public domain). Elevation and land cover are computed, not measured.
+The coastline comes from OpenStreetMap's land polygons (© OpenStreetMap contributors, ODbL), fetched by the `Fetch coastline` GitHub workflow into `coast/` and rasterised into `js/data.js` (Åland at 17.6 m, the whole region at 50 m). Lakes are not yet included. Runway coordinates come from OurAirports (public domain). Elevation and land cover are computed, not measured.

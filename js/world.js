@@ -271,7 +271,8 @@ function landSDF(x, z) {
   const d = coastDist(x, z);
   if (d > 150 || d < -150) return d;
   const inCore = Math.abs(x) < T_HALF && Math.abs(z) < T_HALF;
-  const amp = inCore ? 14 : 28;
+  // kustlinjen kommer från OpenStreetMap; bruset ger bara lite liv åt kanterna mellan rutnätspunkterna
+  const amp = inCore ? 6 : 12;
   let s = d + (vnoise(x / 70, z / 70) * 0.6 + vnoise(x / 23 + 5, z / 23 - 3) * 0.4) * amp;
   // banorna ligger alltid på land
   for (const zn of ZONES) {
