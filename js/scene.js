@@ -11,17 +11,25 @@ scene.background = HORIZON.clone();
 // ---------- atmosfär: dis som tunnas ut med höjden och lyser varmt mot solen ----------
 // Ersätter three.js standarddimma i alla material. Värdena är vanliga objekt (inte Vector3) så att
 // alla material delar samma referens och följer med när tid på dygnet och väder ändras.
-const HAZE = { p: { x: 1400, y: 0.55, z: 0 }, sun: { x: 0, y: 0.4, z: -0.9 }, col: { x: 1.0, y: 0.86, z: 0.66 } };
+// Kamerans läge och vridning skickas själva: three.js laddar inte upp dem till alla materialtyper.
+const HAZE = { p: { x: 1400, y: 0.55, z: 0 }, sun: { x: 0, y: 0.4, z: -0.9 }, col: { x: 1.0, y: 0.86, z: 0.66 }, cam: { x: 0, y: 0, z: 0 }, rot: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]) };
 THREE.UniformsLib.fog.hazeP = { value: HAZE.p };
 THREE.UniformsLib.fog.hazeSun = { value: HAZE.sun };
 THREE.UniformsLib.fog.hazeCol = { value: HAZE.col };
+THREE.UniformsLib.fog.hazeCam = { value: HAZE.cam };
+THREE.UniformsLib.fog.hazeRot = { value: HAZE.rot };
+function hazeCamera(cam) {
+  const e = cam.matrixWorld.elements, r = HAZE.rot;
+  r[0] = e[0]; r[1] = e[1]; r[2] = e[2]; r[3] = e[4]; r[4] = e[5]; r[5] = e[6]; r[6] = e[8]; r[7] = e[9]; r[8] = e[10];
+  HAZE.cam.x = e[12]; HAZE.cam.y = e[13]; HAZE.cam.z = e[14];
+}
 for (const k of ['basic', 'lambert', 'phong', 'standard', 'physical', 'toon', 'matcap', 'points', 'dashed', 'sprite', 'shadow'])
-  if (THREE.ShaderLib[k]) Object.assign(THREE.ShaderLib[k].uniforms, { hazeP: THREE.UniformsLib.fog.hazeP, hazeSun: THREE.UniformsLib.fog.hazeSun, hazeCol: THREE.UniformsLib.fog.hazeCol });
+  if (THREE.ShaderLib[k]) Object.assign(THREE.ShaderLib[k].uniforms, { hazeP: THREE.UniformsLib.fog.hazeP, hazeSun: THREE.UniformsLib.fog.hazeSun, hazeCol: THREE.UniformsLib.fog.hazeCol, hazeCam: THREE.UniformsLib.fog.hazeCam, hazeRot: THREE.UniformsLib.fog.hazeRot });
 THREE.ShaderChunk.fog_pars_vertex = '#ifdef USE_FOG\n varying float fogDepth;\n varying vec3 vFogView;\n#endif\n';
 THREE.ShaderChunk.fog_vertex = '#ifdef USE_FOG\n fogDepth = - mvPosition.z;\n vFogView = mvPosition.xyz;\n#endif\n';
 THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
  uniform vec3 fogColor; varying float fogDepth; varying vec3 vFogView;
- uniform vec3 hazeP; uniform vec3 hazeSun; uniform vec3 hazeCol;
+ uniform vec3 hazeP; uniform vec3 hazeSun; uniform vec3 hazeCol; uniform vec3 hazeCam; uniform mat3 hazeRot;
  #ifdef FOG_EXP2
   uniform float fogDensity;
  #else
@@ -31,10 +39,10 @@ THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
 `;
 THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
  #ifdef FOG_EXP2
-  vec3 fRay = (vec4(vFogView, 0.0) * viewMatrix).xyz;
+  vec3 fRay = hazeRot * vFogView;
   float fLen = length(fRay);
   float fH = max(hazeP.x, 1.0);
-  float fCy = max(cameraPosition.y, 0.0) / fH;
+  float fCy = max(hazeCam.y, 0.0) / fH;
   float fDy = fRay.y / fH;
   // medeltätheten längs strålen i en atmosfär där diset avtar exponentiellt med höjden
   float fK = abs(fDy) > 0.01 ? (1.0 - exp(-fDy)) / fDy : 1.0 - 0.5 * fDy;

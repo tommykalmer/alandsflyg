@@ -59,6 +59,69 @@ function tileBuildings(ci, cj, max = Infinity) {
   return out;
 }
 
+// ---------- vägar som band i 3D ----------
+// Vägarna ligger som tunna band på marken (inte bara i texturen) så att de syns skarpt både nära och på håll.
+// Vertexshadern breddar bandet till minst en dryg bildpunkt på avstånd.
+const ROADS3D = { maxC: 9, mat: null };
+const ROADRGB = [[0, 0, 0], [0.32, 0.33, 0.34], [0.34, 0.35, 0.36], [0.36, 0.37, 0.38], [0.37, 0.38, 0.39], [0.39, 0.39, 0.4], [0.43, 0.42, 0.41],
+  [0.56, 0.5, 0.4], [0.47, 0.42, 0.4], [0.41, 0.42, 0.43]];
+function roadMaterial() {
+  if (ROADS3D.mat) return ROADS3D.mat;
+  const m = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 });
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uPx = LIGHTU.uPx;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec3 rdat;\nuniform float uPx;')
+      .replace('#include <begin_vertex>', `vec3 transformed = vec3(position);
+  float rdc = length((modelViewMatrix * vec4(position, 1.0)).xyz);
+  float rhw = max(abs(rdat.z), rdc / uPx * 0.8);
+  transformed.xz += rdat.xy * sign(rdat.z) * rhw;
+  transformed.y += 0.3 + rdc * 0.0006;`);
+  };
+  return ROADS3D.mat = m;
+}
+function* roadRibbons(ci, cj, out) {
+  const x0 = ci * CH, z0 = cj * CH, pos = [], dat = [], col = [], idx = [];
+  const rl = roadsNear(ci, cj, true);
+  let n = 0;
+  const hAt = (x, z, br) => { let y = Math.max(latticeH(x, z), 0); if (br && y < 3) y = 3; return y; };
+  for (const r of rl) {
+    if (r.c > ROADS3D.maxC || r.bb[2] < x0 || r.bb[0] > x0 + CH || r.bb[3] < z0 || r.bb[1] > z0 + CH) continue;
+    if (++n % 400 === 0) yield;
+    const q = r.pts, hw = ROADW[r.c] / 2, cc = ROADRGB[r.c];
+    // punkter längs vägen var 20:e meter
+    const P = [];
+    for (let j = 0; j + 3 < q.length + 1 && j + 2 < q.length; j += 2) {
+      const ax = q[j], az = q[j + 1], bx = q[j + 2], bz = q[j + 3], L = Math.hypot(bx - ax, bz - az), k = Math.max(1, Math.ceil(L / 20));
+      for (let t = j === 0 ? 0 : 1; t <= k; t++) P.push(ax + (bx - ax) * t / k, az + (bz - az) * t / k);
+    }
+    // bara delar vars mittpunkt ligger i den här rutan (vägar som korsar rutgränser delas)
+    let run = -1;
+    const np = P.length / 2;
+    for (let k = 0; k < np; k++) {
+      const x = P[k * 2], z = P[k * 2 + 1];
+      const nx2 = k + 1 < np ? P[k * 2 + 2] : x, nz2 = k + 1 < np ? P[k * 2 + 3] : z;
+      const mx = (x + nx2) / 2, mz = (z + nz2) / 2, inside = k + 1 < np && mx >= x0 && mx < x0 + CH && mz >= z0 && mz < z0 + CH;
+      const prevIn = run >= 0;
+      if (!inside && !prevIn) continue;
+      const px = k > 0 ? P[k * 2 - 2] : x, pz = k > 0 ? P[k * 2 - 1] : z;
+      let dx = nx2 - px, dz = nz2 - pz; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+      const y = hAt(x, z, r.br), v = pos.length / 3;
+      for (const sd of [-1, 1]) { pos.push(x - x0, y, z - z0); dat.push(-dz, dx, sd * hw); col.push(cc[0], cc[1], cc[2]); }
+      if (prevIn) idx.push(run, run + 1, v, run + 1, v + 1, v);
+      run = inside ? v : -1;
+    }
+  }
+  if (!pos.length) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3));
+  g.setAttribute('rdat', new THREE.Float32BufferAttribute(dat, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(pos.length / 3 > 65535 ? new THREE.Uint32BufferAttribute(idx, 1) : new THREE.Uint16BufferAttribute(idx, 1));
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(CH / 2, 20, CH / 2), CH * 0.75);
+  out.roads = g;
+}
+
 // ---------- ett jobb som bygger en ruta, fördelat över flera bildrutor ----------
 function* chunkJob(ci, cj, lod) {
   const L = LODS[lod], P = L.P, x0 = ci * CH, z0 = cj * CH, pm = CH / P;
@@ -278,7 +341,9 @@ function* chunkJob(ci, cj, lod) {
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   geo.setIndex(idx);
   geo.computeBoundingSphere();
-  return { data: new Uint8Array(out.buffer), P, em: new Uint8Array(emo.buffer), E, geo };
+  const res = { data: new Uint8Array(out.buffer), P, em: new Uint8Array(emo.buffer), E, geo, roads: null };
+  if (lod === 0) yield* roadRibbons(ci, cj, res);
+  return res;
 }
 function finishChunk(ci, cj, lod, res) {
   const tex = new THREE.DataTexture(res.data, res.P, res.P, THREE.RGBAFormat);
@@ -291,6 +356,7 @@ function finishChunk(ci, cj, lod, res) {
   const mesh = new THREE.Mesh(res.geo, mat);
   mesh.position.set(ci * CH, 0, cj * CH);
   mesh.receiveShadow = true;
+  if (res.roads) { const rm = new THREE.Mesh(res.roads, roadMaterial()); rm.receiveShadow = true; rm.renderOrder = 1; mesh.add(rm); mesh.userData.roads = rm; }
   scene.add(mesh);
   const key = keyOf(ci, cj), old = TER.chunks.get(key);
   if (old) disposeChunk(old);
@@ -298,6 +364,7 @@ function finishChunk(ci, cj, lod, res) {
 }
 function disposeChunk(c) {
   scene.remove(c.mesh); c.mesh.geometry.dispose();
+  if (c.mesh.userData.roads) c.mesh.userData.roads.geometry.dispose();
   const m = c.mesh.material; TMATS.delete(m); m.map.dispose(); m.emissiveMap.dispose(); m.dispose();
 }
 function chunkDist(ci, cj, cam) {

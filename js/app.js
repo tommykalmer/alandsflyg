@@ -49,6 +49,7 @@ function applyQuality(id, rebuild) {
   if (sunLight.shadow.mapSize.x !== sm) { sunLight.shadow.mapSize.set(sm, sm); if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; } }
   const p0 = LODS[0].P;
   LODS[0].P = q.l0; LODS[0].E = Math.min(512, q.l0 / 2); LODS[1].P = q.l1; LODS[1].E = q.l1 / 4; LODS[0].range = q.r0; LODS[1].range = q.r1; LODS[2].range = q.r2;
+  ROADS3D.maxC = id === 'low' ? 4 : 9;
   NEAR.rad = q.forest; BLD.rad = q.bld; NEAR.key = ''; BLD.key = '';
   FOG_BASE = q.fog; camera.far = q.r2 + 8000; camera.updateProjectionMatrix();
   sky.scale.setScalar(Math.min(1, camera.far * 0.9 / 70000)); // himlen måste ligga innanför bortre klipplanet
@@ -642,6 +643,7 @@ function frame(now) {
   updateCamera(dt);
   updateTerrain(camera.position, mode === 'fly' ? (WARP > 1 ? 9 : 5) : 8);
   updateBuildings(camera.position);
+  camera.updateMatrixWorld(); hazeCamera(camera);
   renderer.render(scene, camera);
   if (mode === 'fly' && camMode === 'cockpit') { updateCockpit(sim, dt); renderCockpit(sim); }
   HUDMIN = camMode === 'cockpit';
