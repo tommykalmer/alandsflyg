@@ -117,6 +117,7 @@ function wxFrame(dt, cam, S) {
   ZENITH.copy(base0.zen); HORIZON.copy(base0.hor);
   sunLight.intensity = base0.sunI; WX.hemi.intensity = base0.hemiI;
   SKYU.disc.value = base0.disc; SKYU.glow.value = base0.glow; terrainUniforms.uGlit.value = base0.glit;
+  HAZE.p.x = 1400; HAZE.p.y = base0.haze || 0;
   if (!d.cover) { WX.below = 0; WX.inCloud = 0; WX.rain.visible = false; if (WX.white || (WX.white = document.getElementById('wxfog'))) WX.white.style.opacity = '0'; scene.background.copy(HORIZON); scene.fog.color.copy(HORIZON); return; }
   const y = cam.y, light = TOD.light, dusk = clamp(light * 0.85 + 0.15 * (1 - TOD.night), 0, 1);
   // hur mycket av molnlagret som ligger ovanför kameran (0 = ovanför molnen, 1 = under)
@@ -148,6 +149,9 @@ function wxFrame(dt, cam, S) {
   const cloudC = _wxC2.setRGB(0.62, 0.66, 0.7).multiplyScalar(0.12 + 0.88 * dusk);
   scene.fog.color.copy(HORIZON).lerp(cloudC, inCloud);
   scene.fog.density = scene.fog.density * (1 + (d.fog - 1) * below) + inCloud * 0.006;
+  // under ett molntäcke ligger diset jämnt upp till molnbasen; i molnet är det lika tätt åt alla håll
+  HAZE.p.x = lerp(1400, Math.max(1400, WX.base * 1.6), grey) + inCloud * 1e6;
+  HAZE.p.y *= 1 - grey;
   LIGHTU.uFog.value = scene.fog.density;
   // inne i molnet: allt blir vitgrått (även himlen och molnskikten)
   if (!WX.white) WX.white = document.getElementById('wxfog');

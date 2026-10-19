@@ -100,27 +100,8 @@ const ROADS = [
   // Åbo – Reso – Nådendal, Åbo – Pargas
   [[60.452, 22.265], [60.486, 22.17], [60.467, 22.025]], [[60.452, 22.265], [60.41, 22.37]], [[60.452, 22.265], [60.35, 22.3], [60.302, 22.3]]
 ].map(r => r.map(([la, lo]) => geo(la, lo)));
-function townAt(x, z) {
-  // starkaste tätorten i punkten: [faktor 0–1, tätort]
-  let best = 0, bt = null;
-  for (const t of TOWNS) {
-    const d = Math.hypot(x - t.p[0], z - t.p[1]);
-    if (d > t.r * 1.5) continue;
-    const f = 1 - smooth(t.r * 0.55, t.r * 1.15, d + fbm(x / 900 + t.r, z / 900, 2) * t.r * 0.28);
-    if (f > best) { best = f; bt = t; }
-  }
-  return [best, bt];
-}
-function townUV(t, x, z) {
-  const ca = Math.cos(t.a), sa = Math.sin(t.a);
-  return [x * ca + z * sa, -x * sa + z * ca];
-}
-function isTownStreet(x, z, t) {
-  if (!t) t = townAt(x, z)[1];
-  if (!t) return false;
-  const [u, v] = townUV(t, x, z), B = t.block;
-  return ((u % B) + B) % B < TOWN_STREET || ((v % B) + B) % B < TOWN_STREET;
-}
+// tätortsgrad i punkten (från marktäcket); andra värdet finns kvar för äldre anrop
+function townAt(x, z) { return [urbanAt(x, z), null]; }
 
 // ---------- flygplatser (banändar från OurAirports) ----------
 const FT = 0.3048;
@@ -132,8 +113,8 @@ function zoneFromEnds(o) {
 function zoneFromCenter(o) { const [x, z] = geo(o.c[0], o.c[1]); return Object.assign({ x, z }, o); }
 const AIRPORTS = [
   { icao: 'EFMA', iata: 'MHQ', name: 'Mariehamn', big: true, elev: 5, terminal: { side: 1, along: 60, across: 285 } },
-  { icao: 'ESSA', iata: 'ARN', name: 'Stockholm-Arlanda', big: true, elev: 38, flat: 2600, terminal: { side: 1, along: 0, across: 420 } },
-  { icao: 'ESSB', iata: 'BMA', name: 'Stockholm-Bromma', big: true, elev: 14, flat: 900, terminal: { side: -1, along: 0, across: 230 } },
+  { icao: 'ESSA', iata: 'ARN', name: 'Stockholm-Arlanda', big: true, elev: 38, terminal: { side: 1, along: 0, across: 420 } },
+  { icao: 'ESSB', iata: 'BMA', name: 'Stockholm-Bromma', big: true, elev: 14, terminal: { side: -1, along: 0, across: 230 } },
   { icao: 'EFTU', iata: 'TKU', name: 'Turku', big: true, elev: 45, terminal: { side: -1, along: 100, across: 260 } },
   { icao: 'SALT', iata: '', name: 'Saltvik airstrip', elev: 10 },
   { icao: 'EFKG', iata: '', name: 'Kumlinge', elev: 3 },
@@ -285,28 +266,152 @@ function landSDF(x, z) {
 }
 function isLand(x, z) { return landSDF(x, z) > 0; }
 
-// ---------- höjder ----------
-const HILLS = [
-  { p: geo(60.316, 20.135), h: 82, r: 1500 }, // Orrdalsklint, Ålands högsta punkt (129 m)
-  { p: geo(60.383, 19.845), h: 62, r: 1700 }, // Getabergen
-  { p: geo(60.205, 19.66), h: 22, r: 2200 },  // Hammarlands höjder
-  { p: geo(60.255, 20.205), h: 28, r: 1800 }
-];
+// ---------- verkliga kartdata ----------
+// Marktäcke: ESA WorldCover 10 m (CC BY 4.0) förfinat med OpenStreetMap; höjder: Copernicus DEM GLO-30;
+// vägar, byggnader, fyrar: © OpenStreetMap contributors (ODbL). Byggs av coast/build_map.py.
+// Klasser (låga 4 bitar): 0 hav, 1 skog, 2 buskmark, 3 gräs/äng, 4 åker, 5 tät bebyggelse, 6 berg/häll,
+// 7 sjö, 8 våtmark, 9 villaområde, 10 industri/asfalt, 11 sand. Höga 4 bitar: ton (åkerskifte, hällskog).
+const MAPD = {
+  lcC: null, lcCN: 3600, lcR: null, lcRX: 5500, lcRZ: 3340, lcRC: 50,
+  hC: null, hCN: 1024, hR: null, hRX: 2750, hRZ: 1670, hRC: 100,
+  roads: [], rgrid: new Map(), pois: null, tiles: {}, tile: new Map(), urb: null, urbX: 0, urbZ: 0, base: 'data/', fetch: null
+};
+const RCH = 9000; // rutnätet för vägar och byggnader (samma som terrängrutorna)
+async function mapBytes(name) {
+  if (MAPD.fetch) return MAPD.fetch(name);
+  let buf;
+  if (typeof MAP_EMBED !== 'undefined' && MAP_EMBED[name]) {
+    const bin = atob(MAP_EMBED[name]); buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  } else {
+    const r = await fetch(MAPD.base + name);
+    if (!r.ok) throw new Error(name + ' ' + r.status);
+    buf = new Uint8Array(await r.arrayBuffer());
+  }
+  if (!name.endsWith('.bin')) return buf;
+  if (typeof DecompressionStream === 'undefined') throw new Error('this browser is too old for the map data – please update it');
+  const ds = new DecompressionStream('gzip');
+  return new Uint8Array(await new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer());
+}
+function decodeH(b, NX, NZ, q) {
+  const i8 = new Int8Array(b.buffer, b.byteOffset, b.length), a = new Int32Array(NX * NZ), out = new Float32Array(NX * NZ);
+  for (let j = 0, k = 0; j < NZ; j++) for (let i = 0; i < NX; i++, k++) {
+    const p = i > 0 && j > 0 ? a[k - 1] + a[k - NX] - a[k - NX - 1] : i > 0 ? a[k - 1] : j > 0 ? a[k - NX] : 0;
+    a[k] = p + i8[k]; out[k] = a[k] * q;
+  }
+  return out;
+}
+function decodeRoads(b) {
+  const dv = new DataView(b.buffer, b.byteOffset, b.length), n = dv.getUint32(0, true), out = [];
+  let o = 4;
+  for (let r = 0; r < n; r++) {
+    const c = dv.getUint8(o), m = dv.getUint16(o + 1, true); let x = dv.getInt32(o + 3, true), z = dv.getInt32(o + 7, true); o += 11;
+    const pts = new Float32Array(m * 2); pts[0] = x; pts[1] = z;
+    let x0 = x, x1 = x, z0 = z, z1 = z;
+    for (let k = 1; k < m; k++) { x += dv.getInt16(o, true); z += dv.getInt16(o + 2, true); o += 4; pts[k * 2] = x; pts[k * 2 + 1] = z; if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+    out.push({ c: c & 15, br: c >> 4 & 1, pts, bb: [x0, z0, x1, z1] });
+  }
+  return { list: out, end: o };
+}
+function indexRoads(list, into) {
+  for (const r of list) {
+    const [x0, z0, x1, z1] = r.bb;
+    for (let ci = Math.floor((x0 - 40) / RCH); ci <= Math.floor((x1 + 40) / RCH); ci++)
+      for (let cj = Math.floor((z0 - 40) / RCH); cj <= Math.floor((z1 + 40) / RCH); cj++) {
+        const k = ci + ',' + cj; let L = into.get(k); if (!L) into.set(k, L = []); L.push(r);
+      }
+  }
+}
+const MAP_FILES = ['lc_core.bin', 'h_core.bin', 'lc_reg.bin', 'h_reg.bin', 'roads_core.bin', 'roads_reg.bin', 'pois.json', 't/index.json'];
+async function loadMapData(progress) {
+  let done = 0;
+  const got = await Promise.all(MAP_FILES.map(n => mapBytes(n).then(b => { done++; if (progress) progress(done / MAP_FILES.length); return b; })));
+  applyMapData(got);
+}
+function applyMapData(got) {
+  const [lcC, hC, lcR, hR, rC, rR, pois, idx] = got;
+  MAPD.lcC = lcC; MAPD.lcR = lcR;
+  MAPD.hC = decodeH(hC, MAPD.hCN, MAPD.hCN, 0.25);
+  MAPD.hR = decodeH(hR, MAPD.hRX, MAPD.hRZ, 0.5);
+  const td = new TextDecoder();
+  MAPD.pois = JSON.parse(td.decode(pois)); MAPD.tiles = JSON.parse(td.decode(idx));
+  MAPD.roads = decodeRoads(rC).list.concat(decodeRoads(rR).list);
+  indexRoads(MAPD.roads, MAPD.rgrid);
+  buildUrban();
+}
+// ---------- rutor med småvägar och byggnader som hämtas medan man flyger ----------
+function tileState(ci, cj) {
+  const k = ci + ',' + cj;
+  if (!MAPD.tiles[k]) return { ready: true, roads: [], bld: null };
+  let t = MAPD.tile.get(k);
+  if (!t) {
+    t = { ready: false, roads: [], bld: null, used: 0 };
+    MAPD.tile.set(k, t);
+    mapBytes('t/' + ci + '_' + cj + '.bin').then(b => {
+      const r = decodeRoads(b); t.roads = r.list; t.bld = b.subarray(r.end); t.ready = true;
+      if (MAPD.onTile) MAPD.onTile(ci, cj);
+    }).catch(() => { t.ready = true; });
+  }
+  t.used = performance.now();
+  if (MAPD.tile.size > 60) {
+    // glöm de rutor som inte använts på längst tid
+    const old = [...MAPD.tile.entries()].filter(e => e[1].ready).sort((a, b) => a[1].used - b[1].used);
+    for (let i = 0; i < old.length - 50; i++) MAPD.tile.delete(old[i][0]);
+  }
+  return t;
+}
+function roadsNear(ci, cj, minor) {
+  const a = MAPD.rgrid.get(ci + ',' + cj) || [];
+  if (!minor) return a;
+  const t = tileState(ci, cj);
+  return t.roads.length ? a.concat(t.roads) : a;
+}
+// marktäcke i en punkt (byte med klass och ton)
+function lcAt(x, z) {
+  if (!MAPD.lcC) return 1;
+  if (x > -T_HALF && x < T_HALF && z > -T_HALF && z < T_HALF) {
+    const N = MAPD.lcCN, i = ((x + T_HALF) / T_SIZE * N) | 0, j = ((z + T_HALF) / T_SIZE * N) | 0;
+    return MAPD.lcC[j * N + i];
+  }
+  const i = Math.floor((x - REG.x0) / MAPD.lcRC), j = Math.floor((z - REG.z0) / MAPD.lcRC);
+  if (i < 0 || j < 0 || i >= MAPD.lcRX || j >= MAPD.lcRZ) return 0;
+  return MAPD.lcR[j * MAPD.lcRX + i];
+}
+// tätortsgrad 0–1 (rutnät om 150 m över hela regionen, utjämnat)
+function buildUrban() {
+  const C = 3, NX = Math.floor(MAPD.lcRX / C), NZ = Math.floor(MAPD.lcRZ / C), u = new Float32Array(NX * NZ);
+  const wgt = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0.55, 0.7, 0];
+  for (let j = 0; j < NZ; j++) for (let i = 0; i < NX; i++) {
+    let s = 0;
+    for (let b = 0; b < C; b++) for (let a = 0; a < C; a++) s += wgt[MAPD.lcR[(j * C + b) * MAPD.lcRX + i * C + a] & 15] || 0;
+    u[j * NX + i] = s / (C * C);
+  }
+  const v = new Float32Array(NX * NZ);
+  for (let j = 1; j < NZ - 1; j++) for (let i = 1; i < NX - 1; i++) {
+    let s = 0; for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) s += u[(j + b) * NX + i + a];
+    v[j * NX + i] = Math.min(1, s / 9 * 2.2);
+  }
+  MAPD.urb = v; MAPD.urbX = NX; MAPD.urbZ = NZ;
+}
+function urbanAt(x, z) {
+  if (!MAPD.urb) return 0;
+  return sampleGrid(MAPD.urb, MAPD.urbX, MAPD.urbZ, (x - REG.x0) / 150 - 0.5, (z - REG.z0) / 150 - 0.5);
+}
+// höjd över havet enligt höjdmodellen (Åland 70 m, regionen 100 m)
+function demH(x, z) {
+  if (!MAPD.hC) return 2;
+  const ax = Math.abs(x), az = Math.abs(z);
+  const wc = ax < T_HALF && az < T_HALF ? clamp((T_HALF - ax) / 2500, 0, 1) * clamp((T_HALF - az) / 2500, 0, 1) : 0;
+  let hc = 0, hr = 0;
+  if (wc > 0) { const N = MAPD.hCN; hc = sampleGrid(MAPD.hC, N, N, (x + T_HALF) / T_SIZE * N - 0.5, (z + T_HALF) / T_SIZE * N - 0.5); }
+  if (wc < 1) hr = sampleGrid(MAPD.hR, MAPD.hRX, MAPD.hRZ, (x - REG.x0) / MAPD.hRC - 0.5, (z - REG.z0) / MAPD.hRC - 0.5);
+  return wc >= 1 ? hc : wc <= 0 ? hr : lerp(hr, hc, wc);
+}
 function landHeight(x, z, dIn) {
   const d = dIn != null ? dIn : coastDist(x, z);
   if (d <= 0) return 0;
-  const lat = GEO.LAT0 - z / GEO.KZ;
-  const base = 1 - Math.exp(-d / 650);
-  const hn = fbm(x / 5200 + 3, z / 5200 - 7, 4) * 0.5 + 0.5;
-  const north = smooth(60.22, 60.36, lat);
-  const inland = smooth(2000, 12000, d); // fastlandet blir lite högre långt från kusten
-  let h = 0.6 + base * (5 + 30 * hn + 26 * north * hn + 25 * inland * hn) + fbm(x / 650 + 1, z / 650 + 2, 3) * 5 * base + Math.max(0, fbm(x / 1400 - 7, z / 1400 + 3, 3) - 0.15) * 30 * base;
-  const near = Math.min(1, d / 450);
-  for (const hl of HILLS) { const r2 = ((x - hl.p[0]) ** 2 + (z - hl.p[1]) ** 2) / (hl.r * hl.r); if (r2 < 9) h += hl.h * Math.exp(-r2) * near; }
-  // städerna planas ut något
-  const [tf] = townAt(x, z);
-  if (tf > 0) h = lerp(h, Math.min(h, 4 + h * 0.4), tf * 0.7);
-  return Math.max(h, 0.6);
+  // närmast stranden går marken mjukt ner till vattenytan
+  return Math.max(0.6, demH(x, z) * smooth(0, 60, d) + 0.6);
 }
 // höjd i en punkt inklusive utplaning vid flygfält (används för terrängnätets hörn)
 function heightAt(x, z) {
@@ -340,15 +445,25 @@ function initWorld(coreMask, regMask) {
   W.core = chamfer(downsample(coreMask, 4096, 4096), 2048, 2048, T_SIZE / 2048);
   W.reg = chamfer(downsample(regMask, 5500, 3340), W.regNX, W.regNZ, 100);
   W.ready = true;
-  ZONES[1].elev = Math.round(landHeight(ZONES[1].x, ZONES[1].z));
-  APT.SALT.elev = ZONES[1].elev;
+  // banornas höjd från höjdmodellen (medianen längs banan); flygplatser med flera banor får en gemensam nivå
+  for (const zn of ZONES) {
+    if (zn.small) continue;
+    const hs = [];
+    for (let k = -4; k <= 4; k++) { const [x, z] = zoneWorld(zn, k / 8 * zn.len, 0); hs.push(landHeight(x, z)); }
+    hs.sort((a, b) => a - b); zn.elev = Math.max(1, Math.round(hs[4] * 2) / 2);
+  }
+  for (const ap of AIRPORTS) {
+    if (ap.zones[0].small) continue;
+    if (ap.flat) { const e = Math.round(ap.zones.reduce((s, z) => s + z.elev, 0) / ap.zones.length * 2) / 2; for (const z of ap.zones) z.elev = e; }
+    ap.elev = ap.main.elev;
+  }
   // olycksplatser: närmaste öppna mark (inte tätort, inte nära vatten), höjd från terrängen
   for (const zn of ZONES) {
     if (zn.kind === 'scene') {
       let best = null;
       for (const need of [70, 40, 20]) for (let r = 0; r < 3000 && !best; r += 60) for (let k = 0; k < 16 && !best; k++) {
         const a = k / 16 * Math.PI * 2, x = zn.x + Math.cos(a) * r, z = zn.z + Math.sin(a) * r;
-        if (coastDist(x, z) > need && townAt(x, z)[0] < 0.1) best = [x, z];
+        if (coastDist(x, z) > need && townAt(x, z)[0] < 0.1 && !waterAt(x, z) && [3, 4, 2].includes(lcAt(x, z) & 15)) best = [x, z];
       }
       if (best) { zn.x = best[0]; zn.z = best[1]; }
     }
@@ -360,7 +475,7 @@ function initWorld(coreMask, regMask) {
   computeStarts();
 }
 
-// höjd för fysiken: vatten ger −1 (havsytan är y = 0)
+// höjd för fysiken: havet ger −1 (havsytan är y = 0); sjöar ger sjöns yta och waterAt() säger att det är vatten
 function terrainH(x, z) {
   if (!isLand(x, z)) return -1;
   const zn = inRunway(x, z, 60);
@@ -369,21 +484,16 @@ function terrainH(x, z) {
   if (zn && zn.kind === 'helipad' && inRunway(x, z, 0) === zn) return zn.elev;
   return Math.max(latticeH(x, z), 0.3);
 }
-// marktyp: 0 vatten, 1 klippa, 2 skog, 3 åker, 4 flygfält, 5 tätort
+function isLake(x, z) { return (lcAt(x, z) & 15) === 7 && !inRunway(x, z, 80); }
+function waterAt(x, z) { return !isLand(x, z) || isLake(x, z); }
+// marktyp: 0 vatten, 1 klippa, 2 skog, 3 åker/äng, 4 flygfält, 5 tätort
+const LC2T = [0, 2, 2, 3, 3, 5, 1, 0, 3, 5, 5, 1, 3, 3, 3, 3];
 function terrainType(x, z, sdf) {
   const d = sdf != null ? sdf : landSDF(x, z);
   if (d <= 0) return 0;
   const [zb] = zoneBlend(x, z);
   if (zb > 0.55) return 4;
-  if (d < 22) return 1;
-  const [tf] = townAt(x, z);
-  if (tf > 0.5 && d > 30) return 5;
-  // Uppland och Egentliga Finland har mer åkermark än skärgården
-  const lat = GEO.LAT0 - z / GEO.KZ, lon = GEO.LON0 + x / GEO.KX;
-  const farm = (lon < 18.9 || lon > 21.9) ? 0.1 : 0;
-  if (fbm(x / 1700 + 40, z / 1700 - 13, 3) > 0.16 - farm && d > 60) return 3;
-  if (fbm(x / 520 + 5, z / 520 + 9, 2) > 0.5) return 1;
-  return 2;
+  return LC2T[lcAt(x, z) & 15];
 }
 
 // ---------- startplatser ----------
@@ -401,4 +511,4 @@ function computeStarts() {
   const [lx, lz] = geo(60.158, 20.115);
   STARTS.water = { x: lx, z: lz, hdg: longestWater(lx, lz) };
 }
-if (typeof module !== 'undefined' && module.exports) Object.assign(module.exports, { ROADS, TOWNS, townAt, townUV, isTownStreet, TOWN_STREET, MHAMN, DEG, clamp, lerp, smooth, fbm, vnoise, hash2, GEO, geo, ungeo, fmtLatLon, T_SIZE, T_HALF, REG, W, PLACES, AIRPORTS, APT, ZONES, zoneLocal, zoneWorld, zoneBlend, inRunway, isLand, landSDF, coastDist, landHeight, heightAt, hv, LATT, latticeH, initWorld, terrainH, terrainType, STARTS });
+if (typeof module !== 'undefined' && module.exports) Object.assign(module.exports, { MAPD, MAP_FILES, applyMapData, loadMapData, lcAt, demH, urbanAt, waterAt, isLake, roadsNear, tileState, decodeRoads, RCH, ROADS, TOWNS, townAt, MHAMN, DEG, clamp, lerp, smooth, fbm, vnoise, hash2, GEO, geo, ungeo, fmtLatLon, T_SIZE, T_HALF, REG, W, PLACES, AIRPORTS, APT, ZONES, zoneLocal, zoneWorld, zoneBlend, inRunway, isLand, landSDF, coastDist, landHeight, heightAt, hv, LATT, latticeH, initWorld, terrainH, terrainType, STARTS });

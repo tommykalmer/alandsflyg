@@ -8,6 +8,47 @@ const scene = new THREE.Scene();
 const HORIZON = new THREE.Color(0xc4d3dc), ZENITH = new THREE.Color(0x3a6fa3);
 scene.fog = new THREE.FogExp2(HORIZON.getHex(), 0.000026);
 scene.background = HORIZON.clone();
+// ---------- atmosfär: dis som tunnas ut med höjden och lyser varmt mot solen ----------
+// Ersätter three.js standarddimma i alla material. Värdena är vanliga objekt (inte Vector3) så att
+// alla material delar samma referens och följer med när tid på dygnet och väder ändras.
+const HAZE = { p: { x: 1400, y: 0.55, z: 0 }, sun: { x: 0, y: 0.4, z: -0.9 }, col: { x: 1.0, y: 0.86, z: 0.66 } };
+THREE.UniformsLib.fog.hazeP = { value: HAZE.p };
+THREE.UniformsLib.fog.hazeSun = { value: HAZE.sun };
+THREE.UniformsLib.fog.hazeCol = { value: HAZE.col };
+for (const k of ['basic', 'lambert', 'phong', 'standard', 'physical', 'toon', 'matcap', 'points', 'dashed', 'sprite', 'shadow'])
+  if (THREE.ShaderLib[k]) Object.assign(THREE.ShaderLib[k].uniforms, { hazeP: THREE.UniformsLib.fog.hazeP, hazeSun: THREE.UniformsLib.fog.hazeSun, hazeCol: THREE.UniformsLib.fog.hazeCol });
+THREE.ShaderChunk.fog_pars_vertex = '#ifdef USE_FOG\n varying float fogDepth;\n varying vec3 vFogView;\n#endif\n';
+THREE.ShaderChunk.fog_vertex = '#ifdef USE_FOG\n fogDepth = - mvPosition.z;\n vFogView = mvPosition.xyz;\n#endif\n';
+THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
+ uniform vec3 fogColor; varying float fogDepth; varying vec3 vFogView;
+ uniform vec3 hazeP; uniform vec3 hazeSun; uniform vec3 hazeCol;
+ #ifdef FOG_EXP2
+  uniform float fogDensity;
+ #else
+  uniform float fogNear; uniform float fogFar;
+ #endif
+#endif
+`;
+THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
+ #ifdef FOG_EXP2
+  vec3 fRay = (vec4(vFogView, 0.0) * viewMatrix).xyz;
+  float fLen = length(fRay);
+  float fH = max(hazeP.x, 1.0);
+  float fCy = max(cameraPosition.y, 0.0) / fH;
+  float fDy = fRay.y / fH;
+  // medeltätheten längs strålen i en atmosfär där diset avtar exponentiellt med höjden
+  float fK = abs(fDy) > 0.01 ? (1.0 - exp(-fDy)) / fDy : 1.0 - 0.5 * fDy;
+  float fDen = fogDensity * sqrt(max(exp(-fCy) * fK, 0.0));
+  float fogFactor = 1.0 - exp( - fDen * fDen * fLen * fLen );
+  float fSun = pow(max(dot(fRay / max(fLen, 1.0), hazeSun), 0.0), 7.0) * hazeP.y;
+  vec3 fCol = mix(fogColor, fogColor * hazeCol * 1.25, fSun);
+ #else
+  float fogFactor = smoothstep( fogNear, fogFar, fogDepth );
+  vec3 fCol = fogColor;
+ #endif
+ gl_FragColor.rgb = mix( gl_FragColor.rgb, fCol, fogFactor );
+#endif
+`;
 const camera = new THREE.PerspectiveCamera(62, 1, 1.5, 100000);
 let FOG_BASE = 0.000026;
 const maxAniso = renderer.capabilities.getMaxAnisotropy();
@@ -306,16 +347,9 @@ function buildAirfields() {
       ap.term = zoneWorld(zn, zn.len * 0.25, ac);
       continue;
     }
-    const T = ap.terminal, sd = T.side, tx = sd * (zn.wid / 2 + 100), tl = zn.len * 0.9;
-    place(18, tl, 0, tx);
-    for (const f of [-0.45, -0.15, 0.2, 0.45]) place(70, 18, f * zn.len, sd * (zn.wid / 2 + 50));
-    const apL = Math.min(260 + zn.len * 0.08, 520);
-    place(150, apL, T.along, sd * (T.across - 95));
-    box(26, 12, apL * 0.7, T.along, sd * T.across, bmat); box(28, 1, apL * 0.7 + 2, T.along, sd * T.across, roof);
-    box(44, 15, 50, T.along + apL * 0.55, sd * (T.across + 5), roof);
-    box(8, ap.icao === 'ESSA' ? 70 : 24, 8, T.along - apL * 0.45, sd * (T.across + 10), bmat);
+    // de stora flygplatsernas terminaler, taxibanor och plattor kommer från OpenStreetMap; här bara strålkastare
+    const T = ap.terminal, sd = T.side, apL = Math.min(260 + zn.len * 0.08, 520);
     ap.term = zoneWorld(zn, T.along, sd * (T.across - 95));
-    for (let a = -tl / 2; a <= tl / 2; a += 50) for (const c of [tx - 9, tx + 9]) ap.lights.push(zoneWorld(zn, a, c));
     for (const da of [-apL * 0.4, 0, apL * 0.4]) for (const dc of [-55, 55]) ap.floods.push(zoneWorld(zn, T.along + da, sd * (T.across - 95) + dc));
   }
 }
@@ -357,8 +391,10 @@ function nearCell(ci, cj) {
   const col = new THREE.Color();
   for (let k = 0; k < 420; k++) {
     const x = (ci + R()) * C, z = (cj + R()) * C;
-    const t = terrainType(x, z);
-    if (t !== 2 && !(t === 1 && R() < 0.25)) continue;
+    const cl = lcAt(x, z) & 15;
+    // skog tätt, buskmark och villaträdgårdar glest, enstaka träd på hällar och ängar
+    if (!(cl === 1 || (cl === 2 && R() < 0.4) || (cl === 9 && R() < 0.3) || ((cl === 6 || cl === 8) && R() < 0.12) || (cl === 3 && R() < 0.03))) continue;
+    if (landSDF(x, z) < 6 || inRunway(x, z, 120)) continue;
     // gläntor och glesare skog där bruset säger så
     if (vnoise(x / 260 + 7, z / 260 - 3) < -0.35 && R() < 0.8) continue;
     const h = terrainH(x, z); if (h < 0.8) continue;
@@ -725,7 +761,7 @@ function buildWash() {
 }
 function updateWash(S, dt, on) {
   if (!WASH.pts) buildWash();
-  const h0 = terrainH(S.pos.x, S.pos.z), water = h0 < 0, gy = Math.max(h0, 0), agl = S.pos.y - gy;
+  const h0 = terrainH(S.pos.x, S.pos.z), water = h0 < 0 || isLake(S.pos.x, S.pos.z), gy = Math.max(h0, 0), agl = S.pos.y - gy;
   const k = on ? clamp(1 - agl / 22, 0, 1) * clamp((S.n1 - 0.25) / 0.4, 0, 1) : 0;
   WASH.pts.visible = k > 0.01;
   if (!WASH.pts.visible) return;
@@ -775,8 +811,10 @@ function buildHeli() {
 
 async function buildWorld(progress) {
   buildEnv();
-  progress('Loading the coastline…', 0.05);
+  progress('Loading the map of Åland…', 0.02);
+  const pm = loadMapData(p => progress('Loading the map of Åland…', 0.02 + p * 0.2));
   const [core, reg] = await decodeMask();
+  await pm;
   progress('Computing distance to the coast…', 0.25);
   await new Promise(r => setTimeout(r, 20));
   initWorld(core, reg);

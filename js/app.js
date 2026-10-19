@@ -18,9 +18,10 @@ let wxId = store.get('wx', 'clear'); if (!WEATHERS.find(w => w.id === wxId)) wxI
 let guideOn = store.get('guide', '1') === '1';
 // grafikkvalitet: telefoner och surfplattor börjar på medel
 const QUALITY = {
-  low: { n: 'Low', pr: 1.0, shadow: false, l0: 256, r0: 9000, r1: 24000, r2: 52000, forest: 2, bld: 3, fog: 0.000042 },
-  medium: { n: 'Medium', pr: 1.3, shadow: true, l0: 512, r0: 10000, r1: 32000, r2: 72000, forest: 3, bld: 5, fog: 0.000033 },
-  high: { n: 'High', pr: 1.6, shadow: true, l0: 512, r0: 11000, r1: 42000, r2: 96000, forest: 4, bld: 6, fog: 0.000026 }
+  low: { n: 'Low', pr: 1.0, shadow: false, l0: 256, l1: 64, r0: 9000, r1: 24000, r2: 52000, forest: 2, bld: 3, fog: 0.000042 },
+  medium: { n: 'Medium', pr: 1.3, shadow: true, l0: 512, l1: 128, r0: 10000, r1: 32000, r2: 72000, forest: 3, bld: 5, fog: 0.000033 },
+  high: { n: 'High', pr: 1.6, shadow: true, l0: 512, l1: 256, r0: 11000, r1: 42000, r2: 96000, forest: 4, bld: 6, fog: 0.000026 },
+  ultra: { n: 'Ultra', pr: 2.0, shadow: true, sm: 2048, l0: 1024, l1: 256, r0: 14000, r1: 50000, r2: 110000, forest: 6, bld: 9, fog: 0.000022 }
 };
 const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent));
 let qId = store.get('q', IS_MOBILE ? 'medium' : 'high'); if (!QUALITY[qId]) qId = 'medium';
@@ -36,7 +37,7 @@ function perfUpdate(rawDt) {
   if (PERF.fps < 40) { PERF.slow++; PERF.fast = 0; } else if (PERF.fps > 56) { PERF.fast++; PERF.slow = 0; } else { PERF.slow = PERF.fast = 0; }
   if (PERF.slow >= 1 && PERF.prK > 0.62) { PERF.prK = Math.max(0.6, PERF.prK - 0.15); applyPixelRatio(); resize(); PERF.slow = 0; }
   else if (PERF.slow >= 2 && qId !== 'low') {
-    qId = qId === 'high' ? 'medium' : 'low'; store.set('q', qId); PERF.prK = 0.85; applyQuality(qId, true); PERF.slow = 0;
+    qId = qId === 'ultra' ? 'high' : qId === 'high' ? 'medium' : 'low'; store.set('q', qId); PERF.prK = 0.85; applyQuality(qId, true); PERF.slow = 0;
     apMsg('GRAPHICS LOWERED FOR A SMOOTHER FLIGHT');
   } else if (PERF.fast >= 3 && PERF.prK < 1) { PERF.prK = Math.min(1, PERF.prK + 0.1); applyPixelRatio(); resize(); PERF.fast = 0; }
 }
@@ -44,10 +45,13 @@ function applyQuality(id, rebuild) {
   const q = QUALITY[id];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q.pr) * PERF.prK);
   if (sunLight.castShadow !== q.shadow) sunLight.castShadow = q.shadow;
+  const sm = q.sm || 1024;
+  if (sunLight.shadow.mapSize.x !== sm) { sunLight.shadow.mapSize.set(sm, sm); if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; } }
   const p0 = LODS[0].P;
-  LODS[0].P = q.l0; LODS[0].E = q.l0 / 4; LODS[0].range = q.r0; LODS[1].range = q.r1; LODS[2].range = q.r2;
+  LODS[0].P = q.l0; LODS[0].E = Math.min(512, q.l0 / 2); LODS[1].P = q.l1; LODS[1].E = q.l1 / 4; LODS[0].range = q.r0; LODS[1].range = q.r1; LODS[2].range = q.r2;
   NEAR.rad = q.forest; BLD.rad = q.bld; NEAR.key = ''; BLD.key = '';
   FOG_BASE = q.fog; camera.far = q.r2 + 8000; camera.updateProjectionMatrix();
+  sky.scale.setScalar(Math.min(1, camera.far * 0.9 / 70000)); // himlen måste ligga innanför bortre klipplanet
   if (rebuild) { for (const c of TER.chunks.values()) disposeChunk(c); TER.chunks.clear(); TER.job = null; TER.lastCam.set(1e9, 0, 0); }
   if (typeof resize === 'function' && rebuild) resize();
 }
@@ -488,7 +492,7 @@ function updateVisuals(dt) {
   updateNearForest(camera.position);
   updateAircraftLights(S, model);
   // tunnare dis högre upp
-  scene.fog.density = FOG_BASE * (1 - 0.45 * smooth(0, 2500, camera.position.y));
+  scene.fog.density = FOG_BASE;
   wxFrame(dt, camera.position, mode === 'fly' ? S : null);
   S.wxTurb = wxTurb(S.pos.y);
   if (model.gear) { model.gear.visible = S.gearPos > 0.02; model.gear.scale.y = 0.3 + 0.7 * S.gearPos; }

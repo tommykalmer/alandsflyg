@@ -349,7 +349,7 @@ function finishStep(S, dt, ax, ay, az, rud, nz, V, alpha, beta, agl, rho, stalle
     if (!gearActive) { gp.c = false; continue; }
     _r.fromArray(gp.p).applyQuaternion(S.q);
     _P.copy(S.pos).add(_r);
-    const t = terrainH(_P.x, _P.z), water = t < 0, h = water ? 0 : t;
+    const t = terrainH(_P.x, _P.z), water = t < 0 || (gp.lk = isLake(_P.x, _P.z)), h = t < 0 ? 0 : t;
     const pen = h - _P.y;
     if (pen <= 0) { gp.c = false; continue; }
     if (water && !A.floats) { crash(S, A.heli ? 'Ditched in the water' : 'The wheels touched the water and the aircraft overturned'); return; }

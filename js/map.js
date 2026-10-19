@@ -1,6 +1,6 @@
 // ===================== KARTPLOTTER (sjökortsstil) =====================
 const MAP = { open: false, base: null, cv: null, g: null, zoom: 2.2, cx: 0, cz: 0, follow: true, track: [], trackT: 0, ptrs: new Map(), pinch: null, W: 0, H: 0, dpr: 1 };
-const MAPC = { land: [240, 228, 178], coast: [120, 104, 70], shallow: [196, 226, 240], deep: [168, 208, 230], text: '#2b3a44', grid: 'rgba(43,58,68,.22)' };
+const MAPC = { town: [214, 190, 160], land: [240, 228, 178], coast: [120, 104, 70], shallow: [196, 226, 240], deep: [168, 208, 230], text: '#2b3a44', grid: 'rgba(43,58,68,.22)' };
 
 function paintMapArea(x0, z0, w, h, PX, PZ) {
   const cv = document.createElement('canvas'); cv.width = PX; cv.height = PZ;
@@ -10,19 +10,29 @@ function paintMapArea(x0, z0, w, h, PX, PZ) {
   const L = (x, y) => (x < 0 || y < 0 || x >= PX || y >= PZ) ? 0 : lnd[y * PX + x];
   for (let y = 0; y < PZ; y++) for (let x = 0; x < PX; x++) {
     const i = (y * PX + x) * 4; let c;
-    if (L(x, y)) c = (!L(x + 1, y) || !L(x - 1, y) || !L(x, y + 1) || !L(x, y - 1)) ? MAPC.coast : MAPC.land;
+    if (L(x, y)) {
+      const wx = x0 + (x + 0.5) * sx, wz = z0 + (y + 0.5) * sz;
+      if ((lcAt(wx, wz) & 15) === 7) c = MAPC.shallow;
+      else if (!L(x + 1, y) || !L(x - 1, y) || !L(x, y + 1) || !L(x, y - 1)) c = MAPC.coast;
+      else { const u = urbanAt(wx, wz); c = u > 0.3 ? MAPC.land.map((v, j) => lerp(v, MAPC.town[j], Math.min(1, (u - 0.3) * 2.5))) : MAPC.land; }
+    }
     else { const t = smooth(0, 700, -dist[y * PX + x]); c = MAPC.shallow.map((v, j) => lerp(v, MAPC.deep[j], t)); }
     d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = 255;
   }
   g.putImageData(id, 0, 0);
-  // tätorter, vägar
-  const X = x => (x - x0) / sx, Z = z => (z - z0) / sz;
-  g.fillStyle = 'rgba(150,120,100,.42)';
-  const st = Math.max(sx, 60);
-  for (const t of TOWNS) for (let x = t.p[0] - t.r * 1.2; x < t.p[0] + t.r * 1.2; x += st) for (let z = t.p[1] - t.r * 1.2; z < t.p[1] + t.r * 1.2; z += st)
-    if (townAt(x, z)[0] > 0.5 && coastDist(x, z) > 0) g.fillRect(X(x) - 0.6, Z(z) - 0.6, Math.max(1.2, st / sx), Math.max(1.2, st / sz));
-  g.strokeStyle = 'rgba(176,72,48,.75)'; g.lineWidth = Math.max(1, 1.4 * (1024 / PX) * (w / T_SIZE) * 0.6 + 0.8); g.lineJoin = g.lineCap = 'round';
-  for (const r of ROADS) { g.beginPath(); r.forEach(([x, z], k) => (k ? g.lineTo(X(x), Z(z)) : g.moveTo(X(x), Z(z)))); g.stroke(); }
+  // vägar (OpenStreetMap): större vägar röda, mindre grå
+  const X = x => (x - x0) / sx, Z = z => (z - z0) / sz, detail = sx < 100;
+  g.lineJoin = g.lineCap = 'round';
+  for (const [maxC, minC, col, lw] of [[5, 5, 'rgba(120,100,80,.45)', 0.6], [4, 3, 'rgba(176,72,48,.6)', 0.9], [2, 1, 'rgba(176,72,48,.85)', 1.4]]) {
+    if (!detail && minC > 3) continue;
+    g.strokeStyle = col; g.lineWidth = lw * (detail ? 1 : 0.8);
+    g.beginPath();
+    for (const r of MAPD.roads) {
+      if (r.c < minC || r.c > maxC || r.bb[2] < x0 || r.bb[0] > x0 + w || r.bb[3] < z0 || r.bb[1] > z0 + h) continue;
+      const q = r.pts; g.moveTo(X(q[0]), Z(q[1])); for (let j = 2; j < q.length; j += 2) g.lineTo(X(q[j]), Z(q[j + 1]));
+    }
+    g.stroke();
+  }
   return cv;
 }
 function buildMapBase() {

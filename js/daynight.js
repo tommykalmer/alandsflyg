@@ -102,27 +102,21 @@ let NIGHT_PTS = null;
 const LAMP_SODIUM = 0xffaa4a, LAMP_LED = 0xfff1d6, WARM = 0xffd38a;
 function buildNight() {
   const L = new LightSet(), R = rng(77);
-  // gatubelysning i alla tätorter längs gatunäten (glesare i de stora städerna)
-  for (const t of TOWNS) {
-    const B = t.block, ca = Math.cos(t.a), sa = Math.sin(t.a), [u0, v0] = townUV(t, t.p[0], t.p[1]);
-    const step = Math.max(34, t.r / 55), every = Math.max(1, Math.round(t.r / 2200)), n = Math.ceil(t.r * 1.2 / B);
-    for (let k = -n; k <= n; k += every) for (let d = -t.r * 1.2; d <= t.r * 1.2; d += step) for (const dir of [0, 1]) {
-      const bu = Math.floor(u0 / B) * B, bv = Math.floor(v0 / B) * B;
-      const u = dir ? bu + k * B + TOWN_STREET / 2 : u0 + d, v = dir ? v0 + d : bv + k * B + TOWN_STREET / 2;
-      const x = u * ca - v * sa, z = u * sa + v * ca;
-      const [tf, tt] = townAt(x, z);
-      if (tt !== t || tf < 0.5 || landSDF(x, z) < 15) continue;
-      L.add(x, terrainH(x, z) + 7, z, R() < 0.75 ? LAMP_SODIUM : LAMP_LED, t.r > 3000 ? 3.2 : 2.2);
-    }
-  }
-  // vägbelysning nära orterna
-  const lit = (x, z) => townAt(x, z)[0] > 0.05 || Math.hypot(x - MHAMN[0], z - MHAMN[1]) < 5200;
-  for (const r of ROADS) for (let i = 0; i < r.length - 1; i++) {
-    const [ax, az] = r[i], [bx, bz] = r[i + 1], len = Math.hypot(bx - ax, bz - az);
-    for (let d = 0; d < len; d += 48) {
-      const x = ax + (bx - ax) * d / len, z = az + (bz - az) * d / len;
-      if (!lit(x, z) || !isLand(x, z)) continue;
-      L.add(x, terrainH(x, z) + 8, z, LAMP_LED, 2.0);
+  // gatubelysning längs de riktiga vägarna i och nära tätorterna (småvägar i regionen lyser via marktexturen)
+  for (const r of MAPD.roads) {
+    if (r.c > 6) continue;
+    const q = r.pts, core = Math.abs(q[0]) < T_HALF && Math.abs(q[1]) < T_HALF;
+    const step = core ? (r.c <= 3 ? 40 : 34) : 70;
+    let carry = R() * step;
+    for (let j = 2; j < q.length; j += 2) {
+      const ax = q[j - 2], az = q[j - 1], bx = q[j], bz = q[j + 1], len = Math.hypot(bx - ax, bz - az);
+      for (let d = carry; d < len; d += step) {
+        const x = ax + (bx - ax) * d / len, z = az + (bz - az) * d / len, u = urbanAt(x, z);
+        if (u < (core ? 0.12 : 0.25) && !(r.c <= 2 && u > 0.04)) continue;
+        if (!isLand(x, z)) continue;
+        L.add(x, terrainH(x, z) + (r.c <= 2 ? 10 : 7), z, r.c <= 2 || R() < 0.35 ? LAMP_LED : LAMP_SODIUM, r.c <= 2 ? 2.6 : 2.0);
+      }
+      carry = ((carry - len) % step + step) % step;
     }
   }
   // flygfälten
@@ -180,19 +174,16 @@ function buildNight() {
   }
   // vindkraftverk: röda hinderljus som blinkar i takt
   for (const t of TURBINES) { const p = t.pos; L.add(p.x, p.y + 83, p.z, 0xff2a1a, 2.2, 0.5, 0, 0.6); }
-  // fyrar på yttre skär i hela regionen
+  // fyrar på sina riktiga platser (OpenStreetMap)
   {
-    let n = 0, tries = 0; const R2 = rng(9);
+    const R2 = rng(9);
     const towerM = new THREE.MeshLambertMaterial({ color: 0xf2efe6 }), topM = new THREE.MeshLambertMaterial({ color: 0xb3261e });
-    while (n < 26 && tries < 9000) {
-      tries++;
-      const x = REG.x0 + R2() * (REG.x1 - REG.x0), z = REG.z0 + R2() * (REG.z1 - REG.z0), d = coastDist(x, z);
-      if (d < 3 || d > 60 || townAt(x, z)[0] > 0 || coastDist(x + 600, z) > 0 && coastDist(x - 600, z) > 0) continue;
-      const h = terrainH(x, z);
-      if (h < 0) continue;
-      const tw = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.2, 14, 8), towerM); tw.position.set(x, h + 7, z); scene.add(tw);
-      const top = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 1.7, 3, 8), topM); top.position.set(x, h + 15.5, z); scene.add(top);
-      L.add(x, h + 16, z, 0xffffff, 5, 0.2 + R2() * 0.15, R2(), 0); n++;
+    const tg = new THREE.CylinderGeometry(1.6, 2.2, 14, 8), cg = new THREE.CylinderGeometry(1.7, 1.7, 3, 8);
+    for (const [x, z] of (MAPD.pois && MAPD.pois.lighthouse) || []) {
+      const h = Math.max(terrainH(x, z), 0.5);
+      const tw = new THREE.Mesh(tg, towerM); tw.position.set(x, h + 7, z); scene.add(tw);
+      const top = new THREE.Mesh(cg, topM); top.position.set(x, h + 15.5, z); scene.add(top);
+      L.add(x, h + 16, z, 0xffffff, 5, 0.2 + R2() * 0.15, R2(), 0);
     }
   }
   // hamnen och slottet
@@ -284,8 +275,12 @@ function setTimeOfDay(hour) {
   for (const m of TMATS) m.emissiveIntensity = 1.6 * NIGHTU.value;
   scene.fog.density = FOG_BASE * (1 - 0.3 * night);
   LIGHTU.uFog.value = scene.fog.density;
+  // diset lyser upp mot solen, varmast när solen står lågt
+  HAZE.sun.x = SUN.x; HAZE.sun.y = SUN.y; HAZE.sun.z = SUN.z;
+  const sc = SKYU.sunCol.value; HAZE.col.x = sc.r; HAZE.col.y = sc.g; HAZE.col.z = sc.b;
+  HAZE.p.y = (0.35 * dayF + golden * 0.9 + twi * (1 - dayF) * 0.5) * smooth(-10, -2, e);
   // grundläge som vädret blandar från varje bildruta
-  TOD.base = { zen: ZENITH.clone(), hor: HORIZON.clone(), sunI: sunLight.intensity, hemiI: hemi.intensity, disc: SKYU.disc.value, glow: SKYU.glow.value, glit: terrainUniforms.uGlit.value };
+  TOD.base = { zen: ZENITH.clone(), hor: HORIZON.clone(), sunI: sunLight.intensity, hemiI: hemi.intensity, disc: SKYU.disc.value, glow: SKYU.glow.value, glit: terrainUniforms.uGlit.value, haze: HAZE.p.y };
   drawEnv();
 }
 function lightsResize() {
