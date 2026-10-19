@@ -1,0 +1,89 @@
+# Hämtar kartdata för spelvärlden och sparar den på grenen "geodata" (inte main, så att sajten inte blir tyngre).
+#  - marktäcke: ESA WorldCover 10 m (CC BY 4.0)
+#  - höjder: Copernicus DEM GLO-30 (fri användning med källangivelse)
+#  - vägar, byggnader, sjöar m.m.: OpenStreetMap via Geofabrik (ODbL)
+# Körs manuellt: Actions → "Fetch map data" → Run workflow.
+name: Fetch map data
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CORE: "19.349278 59.874426 20.650722 60.525574"
+      REG: "17.559791 59.250410 22.530587 60.760710"
+    steps:
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin osmium-tool
+
+      - name: Land cover (ESA WorldCover 2021)
+        run: |
+          mkdir -p out
+          B=https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map
+          L=""
+          for t in N57E015 N57E018 N57E021 N60E015 N60E018 N60E021; do
+            L="$L /vsicurl/$B/ESA_WorldCover_10m_2021_v200_${t}_Map.tif"
+          done
+          gdalbuildvrt wc.vrt $L
+          gdalwarp -q -te $CORE -ts 7200 7200 -r mode -ot Byte -co COMPRESS=DEFLATE -co PREDICTOR=1 wc.vrt out/landcover_core.tif
+          gdalwarp -q -te $REG -ts 5500 3340 -r mode -ot Byte -co COMPRESS=DEFLATE wc.vrt out/landcover_region.tif
+          ls -la out
+
+      - name: Elevation (Copernicus DEM GLO-30)
+        run: |
+          B=https://copernicus-dem-30m.s3.amazonaws.com
+          L=""
+          for la in 59 60; do for lo in 017 018 019 020 021 022; do
+            n=Copernicus_DSM_COG_10_N${la}_00_E${lo}_00_DEM
+            if curl -sfI "$B/$n/$n.tif" > /dev/null; then L="$L /vsicurl/$B/$n/$n.tif"; else echo "missing $n (sea)"; fi
+          done; done
+          gdalbuildvrt dem.vrt $L
+          gdalwarp -q -te $CORE -ts 3600 3600 -r average -ot Float32 -dstnodata -9999 -co COMPRESS=DEFLATE -co PREDICTOR=3 dem.vrt out/dem_core.tif
+          gdalwarp -q -te $REG -ts 2750 1670 -r average -ot Float32 -dstnodata -9999 -co COMPRESS=DEFLATE -co PREDICTOR=3 dem.vrt out/dem_region.tif
+          ls -la out
+
+      - name: OpenStreetMap
+        run: |
+          curl -sSL --retry 3 -o fi.pbf https://download.geofabrik.de/europe/finland-latest.osm.pbf
+          curl -sSL --retry 3 -o se.pbf https://download.geofabrik.de/europe/sweden-latest.osm.pbf
+          C=$(echo $CORE | tr ' ' ','); R=$(echo $REG | tr ' ' ',')
+          osmium extract -s smart -b $C fi.pbf -o aland.pbf
+          osmium extract -s smart -b $R fi.pbf -o reg_fi.pbf
+          osmium extract -s smart -b $R se.pbf -o reg_se.pbf
+          osmium merge reg_fi.pbf reg_se.pbf -o reg.pbf
+          # Åland: allt som syns från luften
+          osmium tags-filter aland.pbf nwr/highway nwr/building nwr/natural nwr/landuse nwr/leisure nwr/aeroway nwr/man_made nwr/waterway nwr/bridge nwr/railway nwr/place nwr/amenity=parking nwr/power=line,tower -o aland_f.pbf
+          osmium export aland_f.pbf -f geojsonseq -o out/osm_aland.geojsonseq
+          # hela regionen: större vägar, flygplatser, färjor, orter och fyrar
+          osmium tags-filter reg.pbf w/highway=motorway,motorway_link,trunk,trunk_link,primary,primary_link,secondary,secondary_link,tertiary,unclassified,residential nwr/aeroway=runway,taxiway,apron,terminal w/route=ferry n/place=city,town,village,hamlet n/man_made=lighthouse r/route=ferry nwr/bridge -o reg_f.pbf
+          osmium export reg_f.pbf -f geojsonseq -o out/osm_region.geojsonseq
+          # byggnader i regionen (för städernas siluetter) – bara läge, storlek och höjd
+          osmium tags-filter reg.pbf nwr/building -o reg_b.pbf
+          osmium export reg_b.pbf -f geojsonseq -o out/osm_region_buildings.geojsonseq
+          gzip -9 out/*.geojsonseq
+          ls -la out
+
+      - name: Commit to the geodata branch
+        run: |
+          cd out
+          git init -q -b geodata
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          cat > README.md <<'EOF'
+          Source data for Ålandsflyg (not used directly by the site).
+          - landcover_*.tif: ESA WorldCover 10 m 2021 v200 (© ESA WorldCover project 2021, CC BY 4.0)
+          - dem_*.tif: Copernicus DEM GLO-30 (© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018, provided under COPERNICUS by the European Union and ESA)
+          - osm_*.geojsonseq.gz: © OpenStreetMap contributors (ODbL), via Geofabrik
+          Grids are plain lat/lon; core = Åland 72 x 72 km, region = Stockholm–Turku.
+          EOF
+          for f in *; do s=$(stat -c %s "$f"); if [ $s -gt 95000000 ]; then split -b 90m "$f" "$f.part-"; rm "$f"; fi; done
+          ls -la
+          git add -A
+          git commit -q -m "Map data: WorldCover, Copernicus DEM, OpenStreetMap"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" geodata
