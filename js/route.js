@@ -128,8 +128,16 @@ function athrOn(S) {
 }
 function athrOff(why) { if (!ATHR.on) return; ATHR.on = false; apMsg(why || 'AUTOTHRUST OFF'); if (typeof chime === 'function') chime('dingdong'); }
 // målfarten just nu: inflygningsschemat nära en bana, annars farten när A/THR kopplades in
+// På inflygningen börjar målfarten på den fart man har och sänks bara när schemat kräver det
+// (aldrig upp i onödan, aldrig under landningsfarten).
 function speedTarget(S, ap) {
-  if (ap && ap.dist > -200) return apprSpeed(S.ac, Math.max(ap.dist, 0), S.wind);
+  if (ap && ap.dist > -200) {
+    const A = S.ac, sched = apprSpeed(A, Math.max(ap.dist, 0), S.wind), floor = vref(A) + windAdd(A, S.wind);
+    if (S.vHold == null) S.vHold = S.ias * 1.944;
+    S.vHold = clamp(S.vHold, floor, Math.max(sched, floor));
+    return S.vHold;
+  }
+  S.vHold = null;
   return ATHR.spd || S.ias * 1.944;
 }
 

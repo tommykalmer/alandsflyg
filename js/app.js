@@ -642,6 +642,25 @@ function callouts(S) {
   LAND.raPrev = ra;
 }
 
+// ---------- gasguide: rosa markering på gasreglaget där gasen ungefär ska stå för att hålla den rosa farten ----------
+// Utgår från nuvarande gas och rättar med fartfelet om 6 sekunder (fart + trend), som A/THR gör. Grön när du ligger rätt.
+const THRH = { v: null, el: null, st: null };
+function throttleHint(dt) {
+  if (!THRH.el) THRH.el = $('thrSug');
+  const S = sim, A = S.ac;
+  const ap = !A.heli && guideOn && !AP.on && !ATHR.on && !S.onGround ? approachInfo(S) : null;
+  if (!ap || ap.dist < -100) { if (!THRH.el.hidden) THRH.el.hidden = true; THRH.v = null; THRH.st = null; return; }
+  // samma lugna regulator som A/THR, men utan att röra gasen: följer du markeringen flyger du som A/THR
+  if (!THRH.st) THRH.st = { at: S.thr, last: null };
+  const fk = FLAREK[A.cls] || FLAREK.ga;
+  let tgt = autothrottle(S, speedTarget(S, ap), dt, THRH.st);
+  if (ap.dist < 1500 && ft(S.agl) < fk[2] * 1.2) { tgt = 0; THRH.st.at = 0; } // utplaning: tomgång
+  THRH.v = THRH.v == null ? tgt : THRH.v + (tgt - THRH.v) * (1 - Math.exp(-dt * 3));
+  THRH.el.hidden = false;
+  THRH.el.style.top = ((1 - THRH.v) * 100).toFixed(1) + '%';
+  THRH.el.classList.toggle('ok', Math.abs(S.thr - THRH.v) < 0.05);
+}
+
 // ---------- huvudloop ----------
 let last = performance.now(), APK = 0;
 const thrKnob = $('thrKnob'), thrFill = $('thrFill');
@@ -692,6 +711,7 @@ function frame(now) {
   if (mode === 'fly') drawGuide(sim, guideOn, LAND.toast);
   drawMap(sim);
   if (mode === 'fly') drawMini(sim);
+  if (mode === 'fly') throttleHint(dt);
   if (mode === 'fly') { const t = sim.thr; thrKnob.style.top = ((1 - t) * 100) + '%'; thrFill.style.height = (t * 100) + '%'; const tx = sim.ac.heli && sim.assist && !AP.on ? (t > 0.42 && t < 0.58 ? 'HOLD' : (t > 0.5 ? '▲' : '▼') + Math.round(Math.abs(t > 0.5 ? (t - 0.58) / 0.42 * 8 : (t - 0.42) / 0.42 * 6) * 196.85 / 100) * 100) : String(Math.round(t * 100)); if (thrKnob.textContent !== tx) thrKnob.textContent = tx; }
   updateAudio();
   if (mode === 'fly') tutorialShow(sim); else if (!$('tut').hidden) $('tut').hidden = true;

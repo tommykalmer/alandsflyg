@@ -329,8 +329,8 @@ function drawGuide(S, on, toast) {
   else if (A.retract && !S.gearDown && gearDue(A, ap.dist, S.flap)) { advice = 'GEAR DOWN NOW'; acol = C_WARN; }
   else if (S.flap < want && nextOk) { advice = 'FLAPS ' + A.flaps[S.flap + 1].n + ' NOW'; acol = C_AMBER; }
   else if (S.flap < want) { advice = 'SLOW DOWN FOR FLAPS ' + A.flaps[S.flap + 1].n; acol = C_AMBER; }
-  else if (vT != null && ias > vT + 8 && !ATHR.on) { advice = 'TOO FAST – LESS POWER' + (A.spoilers && ias > vT + 25 ? ', SPEED BRAKE' : ''); acol = C_AMBER; }
-  else if (vT != null && ias < vT - 6 && !ATHR.on) { advice = 'TOO SLOW – MORE POWER'; acol = C_WARN; }
+  else if (vT != null && ias > vT + 8 && !ATHR.on) { advice = 'TOO FAST – THROTTLE DOWN TO THE PINK MARK' + (A.spoilers && ias > vT + 25 ? ', SPEED BRAKE' : ''); acol = C_AMBER; }
+  else if (vT != null && ias < vT - 6 && !ATHR.on) { advice = 'TOO SLOW – THROTTLE UP TO THE PINK MARK'; acol = C_WARN; }
   else if (dev > 120) { advice = 'HIGH – NOSE DOWN TO THE RING'; acol = C_AMBER; }
   else if (dev < -120) { advice = 'LOW – MORE POWER, NOSE UP TO THE RING'; acol = C_AMBER; }
   else advice = onRing ? 'STABLE – KEEP THE MARKER IN THE RING' : 'PUT THE GREEN MARKER IN THE RING';
