@@ -71,7 +71,7 @@ function drawHUD(S, show, paused) {
     hx.lineTo(tx + Math.sin(bk + 2.7) * 11, ty - Math.cos(bk + 2.7) * 11); hx.closePath();
   }, Math.abs(S.bank) > 45 * DEG ? C_AMBER : C_HUD);
   strokeFill(() => { hx.moveTo(cx - 44, cy); hx.lineTo(cx - 16, cy); hx.lineTo(cx - 8, cy + 8); hx.lineTo(cx, cy); hx.lineTo(cx + 8, cy + 8); hx.lineTo(cx + 16, cy); hx.lineTo(cx + 44, cy); }, C_HUD, 2.2);
-  if (S.V > 8) {
+  if (S.V > 8 && (typeof camMode === 'undefined' || camMode !== 'chase')) {
     const mx = clamp(cx + (S.beta / DEG) * ppd, cx - clipW, cx + clipW), my = clamp(cy + (S.alpha / DEG) * ppd, cy - clipH, cy + clipH);
     strokeFill(() => { hx.arc(mx, my, 7, 0, Math.PI * 2); hx.moveTo(mx - 7, my); hx.lineTo(mx - 19, my); hx.moveTo(mx + 7, my); hx.lineTo(mx + 19, my); hx.moveTo(mx, my - 7); hx.lineTo(mx, my - 14); });
   }
@@ -176,7 +176,7 @@ function drawHUD(S, show, paused) {
     const rem = routeRemaining(S), eta = rem / Math.max(S.gs, 25) / 60;
     htext(`${ROUTE.from.label} → ${ROUTE.to.label} · ${fmtKm(rem)} km to go · ${eta < 1 ? '<1' : Math.round(eta)} min`, hcx, hy + 66, 13, 'center', '#ff9ae6', 700);
   }
-  if (AP.on) htext(`AP ${AP.lat}${AP.lat !== 'APP' ? ' · ' + Math.round(ft(AP.lat === 'NAV' && AP.altT != null ? AP.altT : AP.alt) / 100) * 100 + ' FT' : ' · GLIDESLOPE'} · ${Math.round(AP.spdT || AP.spd)} KT${WARP > 1 ? ' · TIME WARP ×' + WARP : ''}`, hcx, hy + (ROUTE.on ? 84 : 66), 13, 'center', C_GOAL, 700);
+  if (AP.on) htext(AP.app ? `AUTOLAND · ${{ APP: 'GLIDESLOPE', FLARE: 'FLARE', ROLL: 'ROLLOUT' }[AP.lat] || AP.lat} · ${Math.round(AP.spdT || AP.spd)} KT` : `AP ${AP.lat} · ${Math.round(ft(AP.lat === 'NAV' && AP.altT != null ? AP.altT : AP.alt) / 100) * 100} FT · ${Math.round(AP.spdT || AP.spd)} KT${WARP > 1 ? ' · TIME WARP ×' + WARP : ''}`, hcx, hy + (ROUTE.on ? 84 : 66), 13, 'center', C_GOAL, 700);
   if (AP.msg && performance.now() < AP.msgT) htext(AP.msg, cx, cy - clipH * 0.58 - 26, 16, 'center', C_GOAL, 700);
   hx.globalAlpha = HUDMIN ? 0 : 1;
   // ---- status ----
@@ -221,27 +221,6 @@ function drawHUD(S, show, paused) {
 // ===================== LANDNINGSGUIDE =====================
 let GUIDE_LINES = 0;
 const C_ILS = '#ff7ad9';
-function approachInfo(S) {
-  const A = S.ac; if (A.floats || A.heli) return null;
-  let best = null;
-  if (S.onGround && S.touches === 0 && S.gs < 45) return null;
-  for (const zn of ZONES) {
-    if (zn.kind === 'helipad' || zn.kind === 'scene') continue;
-    if (isBig(A) && !zn.big) continue;
-    if (ROUTE.on && zn !== ROUTE.zone) continue;
-    const [a0, c0] = zoneLocal(zn, S.pos.x, S.pos.z);
-    for (let end = 0; end < 2; end++) {
-      const sg = end === 0 ? 1 : -1, a = a0 * sg, c = c0 * sg;
-      const dist = (-zn.len / 2 + A.tdz) - a;
-      if (dist < -(zn.len - A.tdz) - 50 || dist > (isBig(A) ? 20000 : 9000)) continue;
-      const rh = (zn.hdg + (end ? 180 : 0)) % 360;
-      if (Math.abs(((S.hdg - rh + 540) % 360) - 180) > 60) continue;
-      if (dist > 300 && Math.abs(Math.atan2(c, dist)) > 35 * DEG) continue;
-      if (!best || Math.abs(dist) < Math.abs(best.dist)) best = { zn, end, dist, c, rh, name: zn.ends[end] };
-    }
-  }
-  return best;
-}
 // banmarkering: banans kontur ritas i HUD:en så att den går att hitta på håll (som en syntetisk vy)
 const _rv = new THREE.Vector3();
 function projScr(x, y, z) {
@@ -288,104 +267,130 @@ function drawRunwayBoxes(S, ap) {
   }
   hx.restore();
 }
+// ---- inflygningsguide: grindar längs glidbanan, flygbanemarkering och en ring att följa ----
+// Allt projiceras genom den riktiga kameran, så det stämmer i yttre vy, cockpit och HUD.
+const GUIDE = { key: '', passed: [], last: Infinity, flash: null, ias: null, acc: 0, t: 0 };
+function guideReset() { GUIDE.key = ''; GUIDE.passed = []; GUIDE.last = Infinity; GUIDE.flash = null; }
+const C_OK = '#7dff9a';
+function drawFPV(x, y, col, lw = 2) {
+  strokeFill(() => { hx.moveTo(x + 8, y); hx.arc(x, y, 8, 0, Math.PI * 2); hx.moveTo(x - 8, y); hx.lineTo(x - 22, y); hx.moveTo(x + 8, y); hx.lineTo(x + 22, y); hx.moveTo(x, y - 8); hx.lineTo(x, y - 16); }, col, lw);
+}
+function speedTape(W, H, cx, cy, A) {
+  const small = Math.min(W, H) < 500, portrait = H > W, tapeH = H * (small ? 0.26 : 0.28);
+  return { sx: Math.max(cx - Math.min(W * 0.33, 290), portrait ? 118 : 108), pxk: A.cls === 'jet' ? 2.2 : A.cls === 'tp' ? 2.6 : 3.4, tapeH };
+}
 function drawGuide(S, on, toast) {
   GUIDE_LINES = 0;
-  const A = S.ac, W = HW, H = HH, cx = W / 2, cy = H * 0.46, clipW = HL.clipW, clipH = H * 0.3;
+  const A = S.ac, W = HW, H = HH, cx = W / 2, cy = H * 0.46, clipH = H * 0.3;
   hx.setTransform(HDPR, 0, 0, HDPR, 0, 0);
-  // landningsbetyg
-  if (toast && performance.now() < toast.until) {
-    htext(toast.txt, cx, cy - clipH * 0.58, 24, 'center', toast.col, 700);
-    htext(toast.sub, cx, cy - clipH * 0.58 + 22, 14, 'center', toast.col);
-  }
+  if (toast) drawLandingReport(toast, W, H);
   if (!on) return;
   if (A.heli) { drawRunwayBoxes(S, null); return; }
-  const ias = kt(S.ias), vapp = A.vapp[S.flap];
-  const ap = approachInfo(S);
+  const ias = kt(S.ias), ap = approachInfo(S), big = isBig(A);
   if (!S.onGround) drawRunwayBoxes(S, ap);
-  // fartmarkering för inflygning på farttejpen
-  if (ap || S.flap > 0) {
-    const small = Math.min(W, H) < 500, portrait = H > W, tapeH = H * (small ? 0.26 : 0.28);
-    const sx = Math.max(cx - Math.min(W * 0.33, 290), portrait ? 118 : 108), pxk = A.cls === 'jet' ? 2.2 : A.cls === 'tp' ? 2.6 : 3.4;
-    const y = cy - (vapp - ias) * pxk;
-    if (Math.abs(y - cy) < tapeH) strokeFill(() => { hx.moveTo(sx + 9, y); hx.lineTo(sx + 19, y - 6); hx.lineTo(sx + 19, y + 6); hx.closePath(); }, C_ILS, 2);
-    else htext((y < cy ? '▲ ' : '▼ ') + vapp, sx + 22, y < cy ? cy - tapeH + 8 : cy + tapeH - 8, 12, 'left', C_ILS);
+  // fartens trend (kt/s), utjämnad
+  const now = performance.now();
+  if (GUIDE.ias != null && now > GUIDE.t) GUIDE.acc = lerp(GUIDE.acc, (ias - GUIDE.ias) / ((now - GUIDE.t) / 1000), 0.08);
+  GUIDE.ias = ias; GUIDE.t = now;
+  // ---- målfart på farttejpen: rosa markering som flyttar sig jämnt nedåt mot landningsfarten ----
+  const showSpd = (ap && ap.dist > -100) || ATHR.on;
+  const vT = showSpd ? speedTarget(S, ap) : null, T = speedTape(W, H, cx, cy, A);
+  if (vT != null && !S.onGround && !HUDMIN) {
+    const y = cy - (vT - ias) * T.pxk;
+    if (Math.abs(y - cy) < T.tapeH) {
+      strokeFill(() => { hx.moveTo(T.sx + 3, y); hx.lineTo(T.sx + 15, y - 7); hx.lineTo(T.sx + 15, y + 7); hx.closePath(); }, C_ILS, 2.4);
+      htext(Math.round(vT), T.sx + 19, y, 13, 'left', C_ILS, 700);
+    } else htext((y < cy ? '▲ ' : '▼ ') + Math.round(vT), T.sx + 8, y < cy ? cy - T.tapeH + 8 : cy + T.tapeH - 8, 13, 'left', C_ILS, 700);
+    // trendpil: var farten är om 10 sekunder
+    const yt = clamp(cy - GUIDE.acc * 10 * T.pxk, cy - T.tapeH, cy + T.tapeH);
+    if (Math.abs(yt - cy) > 4) strokeFill(() => { hx.moveTo(T.sx - 2, cy); hx.lineTo(T.sx - 2, yt); hx.moveTo(T.sx - 6, yt + (yt < cy ? 5 : -5)); hx.lineTo(T.sx - 2, yt); hx.lineTo(T.sx + 2, yt + (yt < cy ? 5 : -5)); }, C_OK, 2);
   }
-  if (!ap) return;
+  if (!ap) { if (ATHR.on) htext('A/THR · ' + Math.round(vT) + ' KT', cx, H - (W < 600 ? 136 : 90), 14, 'center', C_GOAL, 700); return; }
+  const base = HUDMIN ? (CK.ovTop ? CK.ovTop - 14 : (H > W ? 190 : 150)) : H - (W < 600 ? 136 : 90);
+  const flareH = ((typeof FLAREK !== 'undefined' && FLAREK[A.cls]) ? FLAREK[A.cls][2] : A.flareFt) * 1.3;
   const aglFt = ft(Math.max(S.agl, 0));
-  const hRel = S.pos.y - A.gearH - ap.zn.elev;
-  const gsOk = ap.dist > 150 && !S.onGround;
-  const dots = gsOk ? clamp((Math.atan2(hRel, ap.dist) / DEG - 3) / 0.35, -2.5, 2.5) : 0;
-  const loc = clamp((Math.atan2(ap.c, ap.dist + ap.zn.len - A.tdz) / DEG) / 1.25, -2.5, 2.5);
-  // glidbana (höger om horisonten) och kurslinje (under)
+  // ---- grindar ----
+  const key = ap.zn.id + ':' + ap.end;
+  if (key !== GUIDE.key) { guideReset(); GUIDE.key = key; }
+  const G = big ? 500 : 250, gw = big ? 80 : 44, gh = big ? 46 : 26;
+  const h = ap.rh * DEG, rx = Math.cos(h), rz = Math.sin(h);
+  // passerade grindar: var flygplanet innanför?
   if (!S.onGround) {
-    const top = HUDMIN && CK.ovTop ? CK.ovTop : 0, gc = HUDMIN ? Math.min(cy, top - 46) : cy;
-    const gx = HUDMIN ? cx + Math.min(clipW, 150) : cx + clipW + 16;
-    if (gsOk) {
-      strokeFill(() => { for (const k of [-2, -1, 1, 2]) { hx.moveTo(gx + 3.5, gc + k * 14); hx.arc(gx, gc + k * 14, 3.5, 0, Math.PI * 2); } hx.moveTo(gx - 8, gc); hx.lineTo(gx + 8, gc); }, C_HUD, 1.2);
-      const dy = gc + dots * 14;
-      strokeFill(() => { hx.moveTo(gx, dy - 7); hx.lineTo(gx + 6, dy); hx.lineTo(gx, dy + 7); hx.lineTo(gx - 6, dy); hx.closePath(); }, C_ILS, 2.2);
+    for (let d = Math.floor(GUIDE.last / G) * G; d > ap.dist && d >= G; d -= G) {
+      if (GUIDE.last === Infinity) break;
+      const [, gy] = glidePoint(A, ap, d), ok = Math.abs(ap.c) < gw / 2 && Math.abs(S.pos.y - gy) < gh / 2;
+      GUIDE.passed.push(ok); GUIDE.flash = { ok, until: now + 900 };
+      if (typeof chime === 'function' && ok) chime('tick');
     }
-    const ly = HUDMIN && top ? top - 14 : cy + clipH - 12;
-    strokeFill(() => { for (const k of [-2, -1, 1, 2]) { hx.moveTo(cx + k * 18 + 3.5, ly); hx.arc(cx + k * 18, ly, 3.5, 0, Math.PI * 2); } hx.moveTo(cx, ly - 8); hx.lineTo(cx, ly + 8); }, C_HUD, 1.2);
-    const lx = cx - loc * 18;
-    strokeFill(() => { hx.moveTo(lx - 7, ly); hx.lineTo(lx, ly - 6); hx.lineTo(lx + 7, ly); hx.lineTo(lx, ly + 6); hx.closePath(); }, C_ILS, 2.2);
   }
-  // ---- styrcirkel (flight director): för in flygbanemarkeringen i den rosa ringen så följer du glidbanan till sättningen ----
-  let fdOk = false, fdLine = null, fdCol = C_ILS, fdRing = null;
-  const base = HUDMIN ? (H > W ? 190 : 150) : H - (W < 600 ? 136 : 90);
-  if (!S.onGround && S.V > 8) {
-    const small = Math.min(W, H) < 500, ppd = Math.min(H, W) * (small ? 0.021 : 0.019);
-    const mx = cx + clamp((S.beta / DEG) * ppd, -clipW, clipW), my = cy + clamp((S.alpha / DEG) * ppd, -clipH, clipH);
-    const gsAltM = ap.zn.elev + A.gearH + Math.max(ap.dist, 0) * Math.tan(3 * DEG);
-    const altErr = gsAltM - S.pos.y; // + = för lågt
-    const flareH = A.flareFt * 2.5;
-    let gDes = -3 + clamp(altErr * 0.05, -3, 2.5);
-    if (aglFt < flareH) gDes = Math.max(gDes, -3 * clamp(aglFt / flareH, 0.12, 1));
-    const gAct = Math.asin(clamp(S.vel.y / Math.max(S.V, 1), -1, 1)) / DEG;
-    const track = (Math.atan2(S.vel.x, -S.vel.z) / DEG + 360) % 360;
-    const trDes = ap.rh - clamp(Math.atan2(ap.c, Math.max(ap.dist * 0.35 + 250, 300)) / DEG * 1.6, -30, 30);
-    const bankDes = clamp((((trDes - track) % 360) + 540) % 360 - 180, -10, 10) * 2;
-    const fx = mx + clamp((bankDes - S.bank / DEG) * ppd * 0.5, -clipW * 0.6, clipW * 0.6);
-    const fy = Math.min(my - clamp((gDes - gAct) * ppd * 1.5, -clipH * 0.5, clipH * 0.45), base - 32);
-    fdOk = Math.hypot(fx - mx, fy - my) < 11;
-    hx.globalAlpha = 1;
-    if (HUDMIN) strokeFill(() => { hx.arc(mx, my, 7, 0, Math.PI * 2); hx.moveTo(mx - 7, my); hx.lineTo(mx - 19, my); hx.moveTo(mx + 7, my); hx.lineTo(mx + 19, my); hx.moveTo(mx, my - 7); hx.lineTo(mx, my - 14); }, C_HUD, 1.6);
-    fdRing = [fx, fy];
-    // höjd och sjunkfart i klartext
-    const ftErr = Math.round(ft(altErr) / 10) * 10, tgtFpm = Math.round(S.gs * Math.tan(3 * DEG) * 196.85 / 50) * 50, nowFpm = Math.round(-S.vs * 196.85 / 50) * 50;
-    const hTxt = Math.abs(ftErr) < 40 ? 'ON GLIDEPATH' : `${Math.abs(ftErr)} FT TOO ${ftErr < 0 ? 'HIGH' : 'LOW'}`;
-    fdLine = `${hTxt} · SINK ${tgtFpm} FT/MIN (NOW ${nowFpm})`;
-    fdCol = Math.abs(ftErr) > 150 || Math.abs(nowFpm - tgtFpm) > 400 ? C_AMBER : C_HUD;
+  GUIDE.last = ap.dist;
+  const nShow = big ? 7 : 6;
+  if (!S.onGround && ap.dist > 40) {
+    hx.save(); hx.lineJoin = 'round';
+    let shown = 0;
+    for (let d = Math.floor((ap.dist - 1) / G) * G; d >= G && shown < nShow; d -= G, shown++) {
+      const [x, y, z] = glidePoint(A, ap, d), pts = [];
+      for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const p = projScr(x + rx * u * gw / 2, y + v * gh / 2, z + rz * u * gw / 2); if (!p) { pts.length = 0; break; } pts.push(p); }
+      if (pts.length < 4) continue;
+      // grinden närmast tonas ut strax innan man flyger igenom den
+      const near = clamp((ap.dist - d - (big ? 120 : 60)) / (big ? 350 : 180), 0, 1);
+      hx.globalAlpha = (shown === 0 ? 1 : Math.max(0.25, 0.85 - shown * 0.12)) * near;
+      if (near < 0.02) continue;
+      strokeFill(() => { hx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < 4; i++) hx.lineTo(pts[i][0], pts[i][1]); hx.closePath(); }, C_ILS, shown === 0 ? 2.6 : 1.6);
+    }
+    hx.restore();
   }
-  // råd
-  let adv = null, col = C_HUD;
-  if (S.onGround) {
-    if (S.gs > 3) { adv = S.thr > 0.1 ? 'THROTTLE IDLE AND BRAKE' : (A.floats ? 'LET IT COAST TO A STOP' : 'BRAKE GENTLY'); col = C_HUD; }
-  } else if (aglFt < A.flareFt && S.vs < 0) { adv = 'FLARE – EASE BACK' + (S.thr > 0.12 ? ', THROTTLE IDLE' : ''); col = C_AMBER; }
-  else if (A.retract && !S.gearDown && ap.dist < 9000) { adv = 'GEAR DOWN' + (ias > A.vapp[A.landFlap] + 20 ? ' (IT SLOWS YOU TOO)' : ''); col = C_WARN; }
-  else {
-    // inbromsning: hur långt behövs för att komma ner till inflygningsfarten?
-    const vLand = A.vapp[A.landFlap], va = S.ias, vt = vLand * 0.5144;
-    // uppmätt inbromsning på tomgång med klaff (planflykt/flack sjunkning), med marginal
-    const dec = A.cls === 'jet' ? 0.85 : A.cls === 'tp' ? 0.95 : 1.1, margin = A.cls === 'jet' ? 3000 : A.cls === 'tp' ? 2400 : 700;
-    const need = Math.max(0, (va * va - vt * vt) / (2 * dec)) + margin;
-    const nextOk = S.flap < A.flaps.length - 1 && ias < A.flaps[S.flap + 1].vfe * 1.944 - 3;
-    if (ias > vLand + 12 && ap.dist < need) {
-      adv = 'SLOW DOWN NOW – IDLE' + (nextOk ? ', FLAPS ' + A.flaps[S.flap + 1].n : '') + (A.spoilers && !S.speedbrake && ias > vLand + 25 ? ', SPEED BRAKE' : ''); col = C_AMBER;
-    } else if (S.flap < A.landFlap && nextOk && ap.dist < need + 2500) { adv = 'FLAPS ' + A.flaps[S.flap + 1].n + ' NOW'; col = C_AMBER; }
-    else if (S.flap < A.landFlap && ap.dist < (isBig(A) ? 6000 : 2500)) { adv = 'SET FLAPS ' + A.flaps[A.landFlap].n + (nextOk ? '' : ' – SLOW DOWN FIRST'); col = C_AMBER; }
-    else if (S.speedbrake && ias < vLand + 8) { adv = 'RETRACT SPEED BRAKE'; col = C_AMBER; }
+  // ---- flygbanemarkering och ringen att följa ----
+  let onRing = false, ringXY = null, fpvXY = null;
+  if (!S.onGround && S.V > 15) {
+    const L = 1500, v = S.vel, vl = Math.max(S.V, 1);
+    fpvXY = projScr(S.pos.x + v.x / vl * L, S.pos.y + v.y / vl * L, S.pos.z + v.z / vl * L);
+    const [qx, qy, qz] = cuePoint(S, ap);
+    ringXY = projScr(qx, qy, qz);
+    if (fpvXY && ringXY) onRing = Math.hypot(fpvXY[0] - ringXY[0], fpvXY[1] - ringXY[1]) < 16;
   }
-  if (adv) { /* inbromsningsråd har företräde */ }
-  else if (gsOk && dots > 1.2) { adv = 'TOO HIGH – LESS POWER, NOSE DOWN TO THE RING'; col = C_AMBER; }
-  else if (!adv && gsOk && dots < -1.2) { adv = 'TOO LOW – MORE POWER, NOSE UP TO THE RING'; col = C_AMBER; }
-  else if (!adv && ias > vapp + 10) { adv = 'TOO FAST – REDUCE POWER'; col = C_AMBER; }
-  else if (!adv && ias < vapp - 6) { adv = 'TOO SLOW – MORE POWER'; col = C_WARN; }
-  else if (!adv && Math.abs(loc) > 1) { adv = 'STEER ' + (loc > 0 ? 'LEFT' : 'RIGHT') + ' TO THE RUNWAY'; col = C_AMBER; }
-  else if (!adv) adv = fdOk ? 'ON GLIDESLOPE – GOOD' : 'STEER THE MARKER INTO THE PINK RING';
-  htext(`RWY ${ap.name} · ${fmtKm(Math.max(ap.dist, 0))} km · LAND ${A.vapp[A.landFlap]} KT WITH FLAPS ${A.flaps[A.landFlap].n}`, cx, base - 18, 13, 'center', C_ILS);
-  if (adv) htext(adv, cx, base, 16, 'center', col, 700);
-  if (fdLine && !AP.on) htext(fdLine, cx, cy - clipH * 0.72, 13, 'center', fdCol, 700);
-  if (fdRing && !AP.on) { const [fx, fy] = fdRing; strokeFill(() => { hx.arc(fx, fy, 15, 0, Math.PI * 2); hx.moveTo(fx + 3, fy); hx.arc(fx, fy, 3, 0, Math.PI * 2); }, fdOk ? C_HUD : C_ILS, 3); }
+  // ---- läget mot glidbanan i klartext ----
+  const gy = glidePoint(A, ap, Math.max(ap.dist, 0))[1], dev = ft(S.pos.y - gy);
+  let advice = null, acol = C_HUD;
+  const want = ap.dist < (APPRS[A.cls] || APPRS.ga).stab + 1500 ? A.landFlap : Math.min(flapFor(A, apprSpeed(A, Math.max(ap.dist, 0))), A.landFlap);
+  const nextOk = S.flap < A.flaps.length - 1 && ias < A.flaps[S.flap + 1].vfe * 1.944 - 3;
+  if (S.onGround) { if (S.gs > 3 && !AP.on) { advice = S.thr > 0.1 ? 'THROTTLE IDLE AND BRAKE' : 'BRAKE GENTLY'; } }
+  else if (AP.on) advice = null;
+  else if (aglFt < flareH && S.vs < 0 && ap.dist < 1500) { advice = 'FLARE – EASE BACK' + (S.thr > 0.12 && !ATHR.on ? ', THROTTLE IDLE' : ''); acol = C_AMBER; }
+  else if (A.retract && !S.gearDown && gearDue(A, ap.dist, S.flap)) { advice = 'GEAR DOWN NOW'; acol = C_WARN; }
+  else if (S.flap < want && nextOk) { advice = 'FLAPS ' + A.flaps[S.flap + 1].n + ' NOW'; acol = C_AMBER; }
+  else if (S.flap < want) { advice = 'SLOW DOWN FOR FLAPS ' + A.flaps[S.flap + 1].n; acol = C_AMBER; }
+  else if (vT != null && ias > vT + 8 && !ATHR.on) { advice = 'TOO FAST – LESS POWER' + (A.spoilers && ias > vT + 25 ? ', SPEED BRAKE' : ''); acol = C_AMBER; }
+  else if (vT != null && ias < vT - 6 && !ATHR.on) { advice = 'TOO SLOW – MORE POWER'; acol = C_WARN; }
+  else if (dev > 120) { advice = 'HIGH – NOSE DOWN TO THE RING'; acol = C_AMBER; }
+  else if (dev < -120) { advice = 'LOW – MORE POWER, NOSE UP TO THE RING'; acol = C_AMBER; }
+  else advice = onRing ? 'STABLE – KEEP THE MARKER IN THE RING' : 'PUT THE GREEN MARKER IN THE RING';
+  if (!S.onGround && !AP.on) {
+    if (ringXY) strokeFill(() => { hx.moveTo(ringXY[0] + 18, ringXY[1]); hx.arc(ringXY[0], ringXY[1], 18, 0, Math.PI * 2); }, onRing ? C_OK : C_ILS, 3.2);
+    if (fpvXY) drawFPV(fpvXY[0], fpvXY[1], onRing ? C_OK : C_HUD, 2.2);
+  }
+  // grindblinkning när man passerar
+  if (GUIDE.flash && now < GUIDE.flash.until) htext(GUIDE.flash.ok ? '✓ GATE' : 'MISSED GATE', cx, cy - clipH * 0.58 - 4, 18, 'center', GUIDE.flash.ok ? C_OK : C_AMBER, 700);
+  const nOk = GUIDE.passed.filter(Boolean).length;
+  const devTxt = S.onGround ? '' : Math.abs(dev) < 50 ? 'ON GLIDEPATH' : `${Math.round(Math.abs(dev) / 10) * 10} FT ${dev > 0 ? 'HIGH' : 'LOW'}`;
+  const top = `RWY ${ap.name} · ${fmtKm(Math.max(ap.dist, 0))} km` + (devTxt ? ' · ' + devTxt : '') + (HUDMIN && vT != null && !S.onGround ? ` · FLY ${Math.round(vT)} KT (NOW ${Math.round(ias)})` : '') + (GUIDE.passed.length ? ` · GATES ${nOk}/${GUIDE.passed.length}` : '');
+  htext(top, cx, base - 20, 14, 'center', Math.abs(dev) > 120 && !S.onGround ? C_AMBER : C_ILS, 700);
+  if (AP.on && AP.app) advice = { APP: 'AUTOLAND · ' + (A.retract && !S.gearDown ? 'CONFIGURING' : 'ON THE GLIDEPATH'), FLARE: 'AUTOLAND · FLARE', ROLL: 'AUTOLAND · BRAKING' }[AP.lat] || advice;
+  if (advice) htext(advice, cx, base, 17, 'center', AP.on ? C_GOAL : acol, 700);
   GUIDE_LINES = 2;
+}
+// ---- landningsrapport: betyg med stjärnor ----
+function drawLandingReport(r, W, H) {
+  const now = performance.now();
+  if (now > r.until) return;
+  const a = clamp((r.until - now) / 600, 0, 1) * clamp((now - r.t0) / 250, 0, 1);
+  const bw = Math.min(W - 40, 380), bh = 32 + 26 + r.lines.length * 19 + 14, bx = (W - bw) / 2, by = H * 0.13;
+  hx.save(); hx.globalAlpha = a;
+  hx.fillStyle = 'rgba(6,14,12,.74)'; hx.beginPath(); hx.roundRect ? hx.roundRect(bx, by, bw, bh, 12) : hx.rect(bx, by, bw, bh); hx.fill();
+  hx.strokeStyle = r.col; hx.lineWidth = 2; hx.stroke();
+  htext(r.txt, W / 2, by + 22, 22, 'center', r.col, 700);
+  let st = ''; for (let i = 0; i < 3; i++) st += i < r.stars ? '★' : '☆';
+  htext(st + (r.best ? '  NEW BEST' : ''), W / 2, by + 48, 20, 'center', '#ffd75a', 700);
+  r.lines.forEach((l, i) => htext(l[0], W / 2, by + 72 + i * 19, 14, 'center', l[1] ? C_OK : C_AMBER, 600));
+  hx.restore();
 }

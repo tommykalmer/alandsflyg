@@ -136,3 +136,4 @@ details.help summary{font:600 14px var(--font-sign);letter-spacing:.08em;color:v
 
 /* vitt dis inne i molnen */
 #wxfog{position:fixed;inset:0;pointer-events:none;opacity:0;background:#a0a8b0}
+.hb.goal{background:#173a4a;color:#9fe4ff;border-color:#7fd3ff}

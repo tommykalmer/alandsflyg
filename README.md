@@ -12,7 +12,9 @@ A browser flight simulator over Åland and the Stockholm and Turku archipelagos.
 - A nautical-chart style map with position, track and mission targets, plus a mini map.
 - Three camera views: outside view, 3D cockpit with working instruments, and HUD.
 - Graphics setting (low, medium, high, ultra) that starts at medium on phones, with automatic adjustment that lowers resolution or quality if the frame rate drops, and an optional FPS meter.
-- Difficulty: Easy (default) helps level the wings and flare near the ground and tolerates firmer touchdowns; Realistic leaves it to you. The landing guide shows a flight-director ring and how far above or below the glide path you are.
+- Difficulty: Easy (default) helps level the wings and flare near the ground and tolerates firmer touchdowns; Realistic leaves it to you.
+- Landing guide: pink gates along the glide path, a green flight-path marker to steer into a pink ring (it also leads you into the flare), a target speed on the speed tape that slides down evenly with a speed-trend arrow, flap and gear prompts, and autothrust (A/THR) that flies the target speed. Every landing gets up to three stars (sink rate, centreline, touchdown zone) with a best record per aircraft and runway.
+- Autoland: lined up with a runway, AUTOLAND (or AP) flies the glide path, sets flaps and gear, flares, brakes and stops on the centreline.
 - Installable web app (PWA): add it to the home screen for full screen and offline play.
 - Weather: clear, scattered clouds, overcast, rain or low fog. Under the cloud layer it is grey and hazy (with rain streaks in rain), inside the cloud you fly on instruments, and above it you come out into sunshine over a sea of clouds. Turbulence in and below the clouds.
 - Six times of day from dawn to night, with lit airports (edge, centreline, touchdown-zone and approach lights), towns, roads, lighthouses and ships.

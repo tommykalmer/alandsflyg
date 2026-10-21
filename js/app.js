@@ -93,7 +93,7 @@ function loadAircraft() {
   sim = createState(acId, start, currentWind());
   if (A.heli) sim.assist = store.get('hassist', '1') === '1';
   sim.easy = (store.get('diff', 'easy')) === 'easy' || (tab === 'mission' && missionId === 'tutorial');
-  LAND.touches = 0; LAND.toast = null; LAND.said = {};
+  LAND.touches = 0; LAND.toast = null; LAND.said = {}; guideReset(); ATHR.on = false;
   input.thr = sim.thr;
   const sz = A.shadow;
   Object.assign(sunLight.shadow.camera, { left: -sz, right: sz, top: sz, bottom: -sz });
@@ -200,7 +200,7 @@ $('tutGo').onclick = () => { tab = 'mission'; store.set('tab', tab); missionId =
 async function missionReposition(start) {
   const easy = sim.easy, assist = sim.assist;
   sim = createState(acId, start, currentWind()); sim.easy = easy; sim.assist = assist;
-  LAND.touches = 0; LAND.toast = null; MAP.track = []; camInit = false; input.thr = sim.thr; WARP = 1; AP.on = false;
+  LAND.touches = 0; LAND.toast = null; MAP.track = []; camInit = false; input.thr = sim.thr; WARP = 1; AP.on = false; ATHR.on = false; guideReset();
   await waitTerrain(sim.pos);
   mode = 'fly'; hideOverlays(); $('ui').hidden = false; syncButtons();
 }
@@ -233,10 +233,18 @@ function syncButtons() {
   $('bBrake').hidden = A.floats || H;
   $('bSpd').hidden = !A.spoilers; $('bSpd').classList.toggle('on', !!sim.speedbrake);
   $('bBelts').classList.toggle('on', CABIN.belts);
-  $('bAP').classList.toggle('on', AP.on); $('bAP').textContent = AP.on ? 'AP ' + AP.lat : 'AP';
+  $('bAP').classList.toggle('on', AP.on); $('bAP').textContent = AP.on ? (AP.app ? 'AUTOLAND ' + ({ APP: 'APP', FLARE: 'FLARE', ROLL: 'ROLL' }[AP.lat] || '') : 'AP ' + AP.lat) : 'AP';
+  $('bATHR').hidden = H || AP.on; $('bATHR').classList.toggle('on', ATHR.on);
+  $('bAuto').hidden = !autolandReady();
   $('bWarp').textContent = '▶ ×' + WARP; $('bWarp').classList.toggle('on', WARP > 1);
   $('bJump').hidden = !ROUTE.on;
   $('bInstr').hidden = camMode !== 'cockpit'; $('bInstr').textContent = CK_SIZES[CK_SIZE].n;
+}
+// autolandning går att koppla in när man är på väg in mot en bana
+function autolandReady() {
+  if (!sim || sim.ac.heli || sim.ac.floats || AP.on || sim.onGround || mode !== 'fly') return false;
+  const ap = approachInfo(sim);
+  return !!ap && ap.dist > 300 && ap.dist < (isBig(sim.ac) ? 22000 : 9000) && Math.abs(ap.c) < ap.dist * 0.4 + 150;
 }
 const act = {
   flapDn() { if (sim && !sim.ac.heli) sim.flap = Math.min(sim.flap + 1, sim.ac.flaps.length - 1); },
@@ -261,6 +269,8 @@ const act = {
     syncButtons();
   },
   ap() { if (!sim) return; if (AP.on) apOff(); else apOn(sim); input.thr = sim.thr; syncButtons(); },
+  athr() { if (!sim || sim.ac.heli || AP.on) return; if (ATHR.on) athrOff(); else athrOn(sim); syncButtons(); },
+  autoland() { if (!sim || AP.on || !autolandReady()) return; apOn(sim); input.thr = sim.thr; syncButtons(); },
   warp(d) {
     if (!sim) return;
     if (!warpAllowed(sim)) { WARP = 1; apMsg(AP.on ? (sim.ac.heli ? 'NO TIME WARP LOW OR CLOSE TO THE TARGET' : 'NO TIME WARP NEAR THE GROUND OR ON APPROACH') : 'ENGAGE THE AUTOPILOT TO TIME WARP'); syncButtons(); return; }
@@ -281,7 +291,7 @@ const act = {
 };
 const tap = (id, fn) => $(id).addEventListener('pointerdown', e => { e.preventDefault(); fn(); });
 tap('bFlapDn', () => act.flapDn()); tap('bFlapUp', () => act.flapUp()); tap('bGear', () => act.gear()); tap('bCam', () => act.cam());
-tap('bPause', () => act.pause()); tap('bSound', () => act.sound()); tap('bMenu', () => showMenu()); tap('bMap', () => act.map()); tap('bBelts', () => toggleBelts()); tap('bSpd', () => act.spd()); tap('bCabin', () => cabinAnnounce()); tap('bAP', () => act.ap()); tap('bInstr', () => { CK_SIZE = (CK_SIZE + 1) % 3; try { localStorage.setItem('alandsflyg.ck', CK_SIZE); } catch (e) {} syncButtons(); }); tap('bWarp', () => act.warp(1)); tap('bAssist', () => act.assist()); tap('bJump', () => act.jump());
+tap('bPause', () => act.pause()); tap('bSound', () => act.sound()); tap('bMenu', () => showMenu()); tap('bMap', () => act.map()); tap('bBelts', () => toggleBelts()); tap('bSpd', () => act.spd()); tap('bCabin', () => cabinAnnounce()); tap('bAP', () => act.ap()); tap('bATHR', () => act.athr()); tap('bAuto', () => act.autoland()); tap('bInstr', () => { CK_SIZE = (CK_SIZE + 1) % 3; try { localStorage.setItem('alandsflyg.ck', CK_SIZE); } catch (e) {} syncButtons(); }); tap('bWarp', () => act.warp(1)); tap('bAssist', () => act.assist()); tap('bJump', () => act.jump());
 let trimHold = 0;
 for (const [id, d] of [['bTrimU', -1], ['bTrimD', 1]]) {
   $(id).addEventListener('pointerdown', e => { e.preventDefault(); trimHold = d; });
@@ -293,7 +303,7 @@ for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) $('bBrake').add
 (function throttle() {
   const el = $('thr'); let id = null;
   const set = e => { const r = el.getBoundingClientRect(); input.thr = clamp(1 - (e.clientY - r.top) / r.height, 0, 1); };
-  el.addEventListener('pointerdown', e => { e.preventDefault(); id = e.pointerId; el.setPointerCapture(id); set(e); });
+  el.addEventListener('pointerdown', e => { e.preventDefault(); id = e.pointerId; el.setPointerCapture(id); set(e); if (ATHR.on) { athrOff('AUTOTHRUST OFF · YOU HAVE THE THROTTLE'); syncButtons(); } });
   el.addEventListener('pointermove', e => { if (e.pointerId === id) set(e); });
   for (const ev of ['pointerup', 'pointercancel']) el.addEventListener(ev, e => { if (e.pointerId === id) id = null; });
 })();
@@ -326,7 +336,7 @@ addEventListener('keydown', e => {
   if (e.repeat) return;
   if (mode !== 'fly') { if (k === 'enter' && mode === 'menu') startFlight(); return; }
   if (k === 'f') act.flapDn(); if (k === 'v') act.flapUp(); if (k === 'g') act.gear(); if (k === 'c') act.cam();
-  if (k === 'p') act.pause(); if (k === 'l') act.sound(); if (k === 'm') act.map(); if (k === 'n') miniToggle(); if (k === 'u') act.spd(); if (k === 'o') act.ap(); if (k === '.') act.warp(1); if (k === ',') act.warp(-1); if (k === 'i') { const i = (TIMES.findIndex(t => t.id === todId) + 1) % TIMES.length; todId = TIMES[i].id; store.set('tod', todId); todCur = TIMES[i].h; setTimeOfDay(TIMES[i].h); } if (k === 'v' && sim && sim.ac.heli) act.assist(); if (k === 'k') toggleBelts(); if (k === 'j') cabinAnnounce(); if (k === 'h' || k === '?') $('keys').hidden = !$('keys').hidden; if (k === 'r') startFlight(); if (k === 'escape') showMenu();
+  if (k === 'p') act.pause(); if (k === 'l' && !e.shiftKey) act.sound(); if (k === 'm') act.map(); if (k === 'n') miniToggle(); if (k === 'u') act.spd(); if (k === 'o') act.ap(); if (k === '[') act.athr(); if (k === ']') act.autoland(); if (k === '.') act.warp(1); if (k === ',') act.warp(-1); if (k === 'i') { const i = (TIMES.findIndex(t => t.id === todId) + 1) % TIMES.length; todId = TIMES[i].id; store.set('tod', todId); todCur = TIMES[i].h; setTimeOfDay(TIMES[i].h); } if (k === 'v' && sim && sim.ac.heli) act.assist(); if (k === 'k') toggleBelts(); if (k === 'j') cabinAnnounce(); if (k === 'h' || k === '?') $('keys').hidden = !$('keys').hidden; if (k === 'r') startFlight(); if (k === 'escape') showMenu();
 });
 addEventListener('keyup', e => { input.kb[e.key.toLowerCase()] = false; });
 addEventListener('blur', () => { input.kb = {}; });
@@ -338,8 +348,9 @@ function updateInputs(dt) {
   input.kbE = ramp(input.kbE, tgt(['arrowdown', 's'], ['arrowup', 'w']));
   input.kbR = ramp(input.kbR, tgt(['arrowright', 'd'], ['arrowleft', 'a']));
   input.kbRud = ramp(input.kbRud, tgt(['e', 'x'], ['q', 'z']));
-  if (kb['shift'] || kb['+'] || kb['='] || kb['pageup']) input.thr = clamp(input.thr + dt * 0.5, 0, 1);
-  if (kb['control'] || kb['-'] || kb['pagedown']) input.thr = clamp(input.thr - dt * 0.5, 0, 1);
+  const kThr = (kb['shift'] || kb['+'] || kb['='] || kb['pageup']) ? 1 : (kb['control'] || kb['-'] || kb['pagedown']) ? -1 : 0;
+  if (kThr && ATHR.on) { athrOff('AUTOTHRUST OFF · YOU HAVE THE THROTTLE'); syncButtons(); }
+  if (kThr) input.thr = clamp(input.thr + kThr * dt * 0.5, 0, 1);
   if (kb['t']) act.trim(-dt * 8); if (kb['y']) act.trim(dt * 8);
   if (trimHold) act.trim(trimHold * dt * 8);
   const expo = v => Math.sign(v) * Math.pow(Math.abs(v), 1.6);
@@ -351,6 +362,13 @@ function updateInputs(dt) {
   sim.inp.e = clamp(expo(input.stickY) + input.kbE, -1, 1);
   sim.inp.r = clamp(expo(input.stickX) + input.kbR, -1, 1);
   sim.inp.rud = sim.ac.heli ? input.kbRud : clamp(input.kbRud + sim.inp.r * (sim.onGround ? 1 : 0.22), -1, 1);
+  if (ATHR.on && !sim.ac.heli) {
+    // autogas: följer den rosa målfarten; drar av gasen i utplaningen och kopplar ur på marken
+    const ap = approachInfo(sim), fk = FLAREK[sim.ac.cls] || FLAREK.ga;
+    if (sim.onGround) { athrOff('AUTOTHRUST OFF'); syncButtons(); input.thr = 0; }
+    else if (ap && ap.dist < 1500 && ft(sim.agl) < fk[2] * 1.2) { input.thr = Math.max(0, input.thr - dt * 0.5); if (!ATHR.retard) { ATHR.retard = true; if (sim.ac.callouts) say('retard'); } }
+    else { ATHR.retard = false; input.thr = autothrottle(sim, speedTarget(sim, ap), dt, ATHR); }
+  }
   if (!sim.alphaFloor) sim.thr = input.thr; else input.thr = sim.thr;
   sim.brake = (kb['b'] || kb[' '] || input.brakeTouch) ? 1 : 0;
 }
@@ -535,6 +553,8 @@ function chime(kind) {
     }
   };
   if (kind === 'ding') tone(1046, t0, 1.6);              // bältesskylten
+  else if (kind === 'tick') { out.gain.value = 0.12; tone(1568, t0, 0.25); } // passerad grind
+  else if (kind === 'win') { tone(784, t0, 0.5); tone(988, t0 + 0.12, 0.5); tone(1175, t0 + 0.24, 0.5); tone(1568, t0 + 0.36, 1.4); } // lyckad landning
   else { tone(1175, t0, 1.3); tone(880, t0 + 0.55, 1.6); } // kabinsignal hög–låg
 }
 function sayLocal(txt, lang) {
@@ -568,19 +588,40 @@ const LAND = { touches: 0, lastT: -9, toast: null, raPrev: 9999, said: {} };
 function landingWatch(S) {
   if (S.touches === LAND.touches) return;
   LAND.touches = S.touches;
-  const t = S.touch, fpm = -t.vs * 196.85, bounce = t.t - LAND.lastT < 2.5;
+  const t = S.touch, fpm = -t.vs * 196.85, bounce = t.t - LAND.lastT < 2.5, A = S.ac;
   LAND.lastT = t.t;
-  let txt, col;
-  if (bounce) { txt = 'BOUNCE'; col = C_AMBER; }
-  else if (fpm < 120) { txt = 'BUTTER LANDING'; col = C_HUD; }
-  else if (fpm < 260) { txt = 'NICE LANDING'; col = C_HUD; }
-  else if (fpm < 450) { txt = 'A BIT FIRM'; col = C_AMBER; }
-  else { txt = 'HARD LANDING'; col = C_WARN; }
-  let sub = Math.round(fpm) + ' ft/min';
-  const rw = inRunway(t.x, t.z, 2);
-  if (rw) { const [, c] = zoneLocal(rw, t.x, t.z); sub += ' · ' + Math.abs(c).toFixed(1) + ' m from ' + (rw.kind === 'helipad' ? 'the pad centre' : 'the centreline'); }
-  else if (t.water) sub += ' · on the water';
-  LAND.toast = { txt, sub, col, until: performance.now() + 5000 };
+  if (bounce && LAND.toast) { LAND.toast.txt = 'BOUNCE'; LAND.toast.col = C_AMBER; LAND.toast.stars = Math.min(LAND.toast.stars, 1); LAND.toast.best = false; return; }
+  const rw = inRunway(t.x, t.z, 2), lines = [], auto = AP.on && AP.app;
+  let stars = 0, txt, col = C_HUD, best = false;
+  const sinkOk = fpm < 300;
+  lines.push([Math.round(fpm) + ' ft/min' + (fpm < 120 ? ' · butter' : fpm < 300 ? ' · smooth' : fpm < 450 ? ' · firm' : ' · hard'), sinkOk]);
+  if (rw && !rw.small && !A.heli) {
+    const ap = approachInfo(S) || approachGeom(S, rw, 0);
+    const cOk = Math.abs(ap.c) < Math.max(3, rw.wid * 0.12);
+    const lo = Math.max(40, A.tdz * 0.35), hi = A.tdz + (isBig(A) ? 600 : 280), tdzOk = ap.fromThr > lo && ap.fromThr < hi;
+    const vr = vref(A), ias = kt(S.ias), spdOk = ias > vr - 25 && ias < vr + 10;
+    lines.push([Math.abs(ap.c).toFixed(1) + ' m from the centreline', cOk]);
+    lines.push([Math.round(ap.fromThr) + ' m past the threshold' + (tdzOk ? ' · in the touchdown zone' : ap.fromThr <= lo ? ' · too short' : ' · long'), tdzOk]);
+    lines.push([Math.round(ias) + ' kt' + (spdOk ? ' · right speed' : ias >= vr + 10 ? ' · too fast' : ' · slow'), spdOk]);
+    if (GUIDE.passed.length) { const n = GUIDE.passed.filter(Boolean).length; lines.push([`gates ${n}/${GUIDE.passed.length}`, n >= GUIDE.passed.length * 0.8]); }
+    stars = (sinkOk ? 1 : 0) + (cOk ? 1 : 0) + (tdzOk ? 1 : 0);
+    if (!spdOk && stars === 3) stars = 2;
+    txt = fpm >= 450 ? 'HARD LANDING' : stars === 3 && fpm < 120 ? 'BUTTER! PERFECT LANDING' : stars === 3 ? 'GREAT LANDING' : stars === 2 ? 'GOOD LANDING' : 'LANDED';
+    col = stars >= 2 && fpm < 450 ? C_OK : stars === 1 ? C_AMBER : C_WARN;
+    if (auto) { txt = 'AUTOLAND · ' + txt; }
+    else {
+      // bästa landning per flygplan och bana sparas
+      const k = 'best.' + acId + '.' + rw.id, prev = JSON.parse(store.get(k, 'null') || 'null');
+      if (!prev || stars > prev.s || (stars === prev.s && fpm < prev.f)) { best = !!prev || stars === 3; store.set(k, JSON.stringify({ s: stars, f: Math.round(fpm) })); }
+    }
+  } else if (rw && (rw.small || A.heli)) {
+    const [, c] = zoneLocal(rw, t.x, t.z); const cOk = Math.abs(c) < 4;
+    lines.push([Math.abs(c).toFixed(1) + ' m from the ' + (rw.kind === 'helipad' ? 'pad centre' : 'centre'), cOk]);
+    stars = (sinkOk ? 2 : 0) + (cOk ? 1 : 0); txt = fpm < 120 ? 'BUTTER LANDING' : sinkOk ? 'NICE LANDING' : 'HARD LANDING'; col = sinkOk ? C_OK : C_WARN;
+  } else if (t.water) { stars = sinkOk ? 2 + (fpm < 150 ? 1 : 0) : 0; txt = sinkOk ? 'NICE WATER LANDING' : 'HARD SPLASHDOWN'; col = sinkOk ? C_OK : C_WARN; }
+  else { txt = 'OFF THE RUNWAY'; col = C_AMBER; stars = 0; }
+  LAND.toast = { txt, col, stars, best, lines, t0: performance.now(), until: performance.now() + 9000 };
+  if (stars >= 2 && fpm < 450) chime('win');
   LAND.said = {};
 }
 let voices = null;
@@ -625,7 +666,7 @@ function frame(now) {
     const apWas = AP.on;
     for (let i = 0; i < n; i++) { if (AP.on && (APK++ & 7) === 0) apUpdate(sim, h * 8); step(sim, h); }
     if (apWas !== AP.on) { if (sim.ac.heli && !AP.on) { sim.apVs = null; sim.thr = sim.assist ? 0.5 : (sim.coll || sim.thr); } input.thr = sim.thr; syncButtons(); }
-    if (AP.on && $('bAP').textContent !== 'AP ' + AP.lat) syncButtons();
+    if (AP.on || ((now / 500) | 0) !== LAND.btnT) { LAND.btnT = (now / 500) | 0; if ($('bAuto').hidden === autolandReady() || AP.on) syncButtons(); }
     missionUpdate(sim, sdt);
     landingWatch(sim);
     callouts(sim);

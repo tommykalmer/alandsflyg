@@ -289,7 +289,7 @@ function step(S, dt) {
   // lätt läge: landningshjälp nära marken – rätar upp vingarna och flyter ut om du sjunker för fort
   S.landAssist = false;
   const bigA = A.cls === 'jet' || A.cls === 'tp', asH = bigA ? 60 : 25;
-  if (S.easy && !S.onGround && S.airTime > 2 && S.agl < asH && S.vel.y < 0) {
+  if (S.easy && !S.apOn && !S.onGround && S.airTime > 2 && S.agl < asH && S.vel.y < 0) {
     S.landAssist = true;
     const vsDes = -Math.max(0.55, S.agl * (bigA ? 0.18 : 0.3));
     // inte så mycket nos upp att stjärten slår i: hjälpen tonas bort mot ca 9° nosvinkel (bushplanet 14°)
