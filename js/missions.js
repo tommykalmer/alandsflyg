@@ -18,7 +18,7 @@ const TUT = [
   { hi: 'stick', enter: (S, M) => { M.h0 = Math.round(S.hdg); M.h1 = (M.h0 + 270) % 360; }, t: (S, M) => `Turn left: move the stick left to bank about 20°, then centre it to hold the bank. Roll out when the heading (top tape) reads ${String(M.h1).padStart(3, '0')}.`, ok: (S, M) => angDiff(S.hdg, M.h1) < 12 },
   { hi: 'stick', t: (S, M) => `Nice. Now turn right back to heading ${String(M.h0).padStart(3, '0')}, and level the wings when you get there.`, ok: (S, M) => angDiff(S.hdg, M.h0) < 12 && Math.abs(S.bank) < 10 * DEG },
   { hi: 'bFlapDn', enter: () => { if (typeof missionReposition === 'function') missionReposition('app'); }, t: () => 'Now let\'s land. You\'re on final approach to Mariehamn. Tap FLAP + so the flaps show 30° – they let you fly slowly.', ok: S => S.flap === 2 },
-  { hi: 'bATHR', t: () => 'Fly through the pink gates: steer the green marker into the pink ring and keep it there. Tap A/THR and the throttle keeps the pink speed for you.', ok: S => S.airTime > 2 && S.agl * 3.281 < 60 },
+  { hi: 'bATHR', t: () => 'Steer the green marker into the pink ring and keep it there – it leads you down to the runway. Tap A/THR and the throttle keeps the pink speed for you.', ok: S => S.airTime > 2 && S.agl * 3.281 < 60 },
   { hi: null, t: () => 'Over the runway: ease the stick back a little to flare, let the throttle go to idle and let the plane settle onto its wheels.', ok: S => S.onGround },
   { hi: 'bBrake', t: () => 'You\'re down! Hold BRAKE gently to stop. Don\'t brake too hard or the plane tips onto its nose.', ok: S => S.onGround && S.gs < 1.5 }
 ];

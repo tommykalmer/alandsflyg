@@ -309,37 +309,6 @@ function drawGuide(S, on, toast) {
   const base = HUDMIN ? (CK.ovTop ? CK.ovTop - 14 : (H > W ? 190 : 150)) : H - (W < 600 ? 136 : 90);
   const flareH = ((typeof FLAREK !== 'undefined' && FLAREK[A.cls]) ? FLAREK[A.cls][2] : A.flareFt) * 1.3;
   const aglFt = ft(Math.max(S.agl, 0));
-  // ---- grindar ----
-  const key = ap.zn.id + ':' + ap.end;
-  if (key !== GUIDE.key) { guideReset(); GUIDE.key = key; }
-  const G = big ? 500 : 250, gw = big ? 80 : 44, gh = big ? 46 : 26;
-  const h = ap.rh * DEG, rx = Math.cos(h), rz = Math.sin(h);
-  // passerade grindar: var flygplanet innanför?
-  if (!S.onGround) {
-    for (let d = Math.floor(GUIDE.last / G) * G; d > ap.dist && d >= G; d -= G) {
-      if (GUIDE.last === Infinity) break;
-      const [, gy] = glidePoint(A, ap, d), ok = Math.abs(ap.c) < gw / 2 && Math.abs(S.pos.y - gy) < gh / 2;
-      GUIDE.passed.push(ok); GUIDE.flash = { ok, until: now + 900 };
-      if (typeof chime === 'function' && ok) chime('tick');
-    }
-  }
-  GUIDE.last = ap.dist;
-  const nShow = big ? 7 : 6;
-  if (!S.onGround && ap.dist > 40) {
-    hx.save(); hx.lineJoin = 'round';
-    let shown = 0;
-    for (let d = Math.floor((ap.dist - 1) / G) * G; d >= G && shown < nShow; d -= G, shown++) {
-      const [x, y, z] = glidePoint(A, ap, d), pts = [];
-      for (const [u, v] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { const p = projScr(x + rx * u * gw / 2, y + v * gh / 2, z + rz * u * gw / 2); if (!p) { pts.length = 0; break; } pts.push(p); }
-      if (pts.length < 4) continue;
-      // grinden närmast tonas ut strax innan man flyger igenom den
-      const near = clamp((ap.dist - d - (big ? 120 : 60)) / (big ? 350 : 180), 0, 1);
-      hx.globalAlpha = (shown === 0 ? 1 : Math.max(0.25, 0.85 - shown * 0.12)) * near;
-      if (near < 0.02) continue;
-      strokeFill(() => { hx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < 4; i++) hx.lineTo(pts[i][0], pts[i][1]); hx.closePath(); }, C_ILS, shown === 0 ? 2.6 : 1.6);
-    }
-    hx.restore();
-  }
   // ---- flygbanemarkering och ringen att följa ----
   let onRing = false, ringXY = null, fpvXY = null;
   if (!S.onGround && S.V > 15) {
@@ -369,11 +338,8 @@ function drawGuide(S, on, toast) {
     if (ringXY) strokeFill(() => { hx.moveTo(ringXY[0] + 18, ringXY[1]); hx.arc(ringXY[0], ringXY[1], 18, 0, Math.PI * 2); }, onRing ? C_OK : C_ILS, 3.2);
     if (fpvXY) drawFPV(fpvXY[0], fpvXY[1], onRing ? C_OK : C_HUD, 2.2);
   }
-  // grindblinkning när man passerar
-  if (GUIDE.flash && now < GUIDE.flash.until) htext(GUIDE.flash.ok ? '✓ GATE' : 'MISSED GATE', cx, cy - clipH * 0.58 - 4, 18, 'center', GUIDE.flash.ok ? C_OK : C_AMBER, 700);
-  const nOk = GUIDE.passed.filter(Boolean).length;
   const devTxt = S.onGround ? '' : Math.abs(dev) < 50 ? 'ON GLIDEPATH' : `${Math.round(Math.abs(dev) / 10) * 10} FT ${dev > 0 ? 'HIGH' : 'LOW'}`;
-  const top = `RWY ${ap.name} · ${fmtKm(Math.max(ap.dist, 0))} km` + (devTxt ? ' · ' + devTxt : '') + (HUDMIN && vT != null && !S.onGround ? ` · FLY ${Math.round(vT)} KT (NOW ${Math.round(ias)})` : '') + (GUIDE.passed.length ? ` · GATES ${nOk}/${GUIDE.passed.length}` : '');
+  const top = `RWY ${ap.name} · ${fmtKm(Math.max(ap.dist, 0))} km` + (devTxt ? ' · ' + devTxt : '') + (HUDMIN && vT != null && !S.onGround ? ` · FLY ${Math.round(vT)} KT (NOW ${Math.round(ias)})` : '');
   htext(top, cx, base - 20, 14, 'center', Math.abs(dev) > 120 && !S.onGround ? C_AMBER : C_ILS, 700);
   if (AP.on && AP.app) advice = { APP: 'AUTOLAND · ' + (A.retract && !S.gearDown ? 'CONFIGURING' : 'ON THE GLIDEPATH'), FLARE: 'AUTOLAND · FLARE', ROLL: 'AUTOLAND · BRAKING' }[AP.lat] || advice;
   if (advice) htext(advice, cx, base, 17, 'center', AP.on ? C_GOAL : acol, 700);

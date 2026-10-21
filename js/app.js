@@ -380,7 +380,8 @@ function setNear(n) { if (camera.near !== n) { camera.near = n; camera.updatePro
 function updateCamera(dt) {
   const A = sim.ac;
   // bredbildsskärm: smalare vertikal synvinkel så att banor och mål inte blir pyttesmå (vågrätt ca 90°)
-  const wide = camera.aspect > 1.3, fovOut = mode === 'fly' && camMode === 'hud' ? (wide ? 46 : 62) : (wide ? 54 : 62);
+  // inifrån (HUD) har samma vida synfält som förr, så att man ser banan rusa förbi vid starten
+  const wide = camera.aspect > 1.3, fovOut = mode === 'fly' && camMode === 'hud' ? 62 : (wide ? 54 : 62);
   if ((mode !== 'fly' || camMode !== 'cockpit') && camera.fov !== fovOut) { camera.fov = fovOut; camera.updateProjectionMatrix(); }
   if (mode === 'menu' || mode === 'loading') {
     orbitA += dt * 0.12;
@@ -603,7 +604,6 @@ function landingWatch(S) {
     lines.push([Math.abs(ap.c).toFixed(1) + ' m from the centreline', cOk]);
     lines.push([Math.round(ap.fromThr) + ' m past the threshold' + (tdzOk ? ' · in the touchdown zone' : ap.fromThr <= lo ? ' · too short' : ' · long'), tdzOk]);
     lines.push([Math.round(ias) + ' kt' + (spdOk ? ' · right speed' : ias >= vr + 10 ? ' · too fast' : ' · slow'), spdOk]);
-    if (GUIDE.passed.length) { const n = GUIDE.passed.filter(Boolean).length; lines.push([`gates ${n}/${GUIDE.passed.length}`, n >= GUIDE.passed.length * 0.8]); }
     stars = (sinkOk ? 1 : 0) + (cOk ? 1 : 0) + (tdzOk ? 1 : 0);
     if (!spdOk && stars === 3) stars = 2;
     txt = fpm >= 450 ? 'HARD LANDING' : stars === 3 && fpm < 120 ? 'BUTTER! PERFECT LANDING' : stars === 3 ? 'GREAT LANDING' : stars === 2 ? 'GOOD LANDING' : 'LANDED';
