@@ -88,3 +88,5 @@ function initConsent() {
   document.getElementById('consentNo').onclick = () => set('no');
 }
 document.addEventListener('DOMContentLoaded', initConsent);
+// CrazyGames-krav: ingen egen helskärmsknapp (portalen har sin egen)
+document.addEventListener('DOMContentLoaded', () => { if (PORTAL) { const fs = document.getElementById('fs'); if (fs) fs.hidden = true; } });
