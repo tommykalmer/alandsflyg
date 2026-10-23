@@ -63,3 +63,12 @@ No build step is needed. Three.js r128 is loaded from cdnjs.
 - Runway coordinates: OurAirports (public domain).
 
 The `Fetch map data` workflow downloads the source data to the `geodata` branch. `python3 coast/build_map.py <geodata folder> .` turns it into `data/`.
+
+## Quick start, analytics and game portals
+
+- **Fly now** (top of the menu) puts the bush plane straight into the air on final approach to Mariehamn — the fastest way from page load to flying.
+- `vendor/three.min.js` (three.js r128) is bundled locally instead of loaded from a CDN, so the game has no third-party script dependency.
+- `js/portal.js` decides the mode:
+  - **Own site** (github.io or a domain containing "alandsflyg"): Google Analytics after the visitor accepts the consent bar. Set `GA_MEASUREMENT_ID` in `js/portal.js` to turn it on.
+  - **Portal** (any other host, or `?portal=1`): CrazyGames SDK v3 — loading start/stop, gameplay start/stop (flight, pause, menu), a midgame ad at natural breaks (crash or mission result, with sound paused), happytime on a completed mission. No Google Analytics.
+- CrazyGames upload: zip the repo contents (index.html at the root). About 418 files and ~24 MB, within their 1,500 files / 250 MB limits. Test ads with `?crazygames_sandbox=1`.

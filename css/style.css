@@ -140,3 +140,10 @@ details.help summary{font:600 14px var(--font-sign);letter-spacing:.08em;color:v
 .thr .sug{position:absolute;left:-4px;right:-22px;height:0;border-top:3px solid #ff7ad9;margin-top:-1.5px;pointer-events:none;transition:top .25s linear}
 .thr .sug::after{content:'';position:absolute;right:0;top:-10px;border:8.5px solid transparent;border-right:12px solid #ff7ad9;border-left:0}
 .thr .sug.ok,.thr .sug.ok::after{border-top-color:#7dff9a;border-right-color:#7dff9a}
+
+/* snabbstart + samtycke */
+.quickgo{margin-bottom:6px}
+.quickSub{margin:0 0 14px;font-size:14px;opacity:.75;text-align:center}
+#consent{position:fixed;left:12px;right:12px;bottom:12px;z-index:50;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;
+  background:rgba(11,17,22,.94);border:1px solid var(--rule);border-radius:8px;padding:10px 14px;font-size:14px}
+#consent[hidden]{display:none}

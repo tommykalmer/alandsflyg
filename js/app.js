@@ -171,6 +171,7 @@ $('tabMission').onclick = () => setTab('mission');
 $('tabRoute').onclick = () => setTab('route');
 function hideOverlays() { for (const id of ['menu', 'crash', 'result', 'loading', 'keys']) $(id).hidden = true; }
 function showMenu() {
+  CG.stop();
   mode = 'menu'; paused = false; mapToggle(false); AP.on = false; WARP = 1;
   hideOverlays(); $('menu').hidden = false; $('ui').hidden = true;
   missionStart(null);
@@ -192,9 +193,14 @@ async function startFlight() {
   hideOverlays(); $('ui').hidden = false;
   fitThrottle(); hudResize(); stickRest(); if (MINI.on) miniResize();
   CABIN.belts = sim.onGround;
+  CG.start(); trackEvent('flight_start', { ac: acId, start: tab === 'mission' ? missionId : startId, tab });
   try { navigator.wakeLock && navigator.wakeLock.request('screen').catch(() => {}); } catch (e) {}
 }
 $('go').onclick = startFlight;
+// snabbstart: bushplanet på inflygning till Mariehamn, i luften direkt
+$('quickGo').onclick = () => { tab = 'free'; store.set('tab', tab); acId = 'beaver'; store.set('ac', acId); startId = 'app'; store.set('start', startId); trackEvent('quick_fly'); startFlight(); };
+// naturlig paus: midgame-annons på portalen (ljudet pausas under annonsen)
+function portalBreak() { CG.stop(); CG.midgame(() => { try { AU.ctx && AU.ctx.suspend(); } catch (e) {} }, () => { try { AU.ctx && AU.ctx.resume(); } catch (e) {} }); }
 $('tutGo').onclick = () => { tab = 'mission'; store.set('tab', tab); missionId = 'tutorial'; store.set('mission', missionId); startFlight(); };
 // uppdrag som flyttar planet mitt i flygningen (första flygningen hoppar till inflygningen)
 async function missionReposition(start) {
@@ -209,7 +215,7 @@ $('keysClose').onclick = () => { $('keys').hidden = true; };
 $('guide').onclick = () => { guideOn = !guideOn; store.set('guide', guideOn ? '1' : '0'); renderMenu(); };
 $('retry').onclick = startFlight; $('toMenu').onclick = showMenu;
 $('rRetry').onclick = startFlight; $('rMenu').onclick = showMenu;
-$('rFly').onclick = () => { MS.state = 'idle'; clearMarkers(); mode = 'fly'; hideOverlays(); $('ui').hidden = false; };
+$('rFly').onclick = () => { MS.state = 'idle'; clearMarkers(); mode = 'fly'; hideOverlays(); $('ui').hidden = false; CG.start(); };
 $('fs').onclick = () => { try { const d = document.documentElement, f = d.requestFullscreen || d.webkitRequestFullscreen; const p = f && f.call(d); if (p && p.catch) p.catch(() => {}); } catch (e) {} };
 
 // ---------- knappar ----------
@@ -257,7 +263,7 @@ const act = {
     else if (sim && !sim.ac.fbw) sim.trim = clamp(sim.trim + d * 0.006, -0.15, 0.15);
   },
   cam() { camMode = camMode === 'chase' ? 'cockpit' : camMode === 'cockpit' ? 'hud' : 'chase'; store.set('cam', camMode); camInit = false; syncButtons(); },
-  pause() { if (mode === 'fly') { paused = !paused; syncButtons(); } },
+  pause() { if (mode === 'fly') { paused = !paused; if (paused) CG.stop(); else CG.start(); syncButtons(); } },
   sound() { AU.on = !AU.on; store.set('sound', AU.on ? '1' : '0'); syncButtons(); },
   map() { if (mode === 'fly') mapToggle(); },
   spd() { if (sim && sim.ac.spoilers) { sim.speedbrake = !sim.speedbrake; syncButtons(); } },
@@ -671,6 +677,9 @@ function showResult() {
   $('rText').textContent = r.text + (r.best ? ' · new record!' : '');
   $('rLines').innerHTML = (r.lines || []).map(l => `<li>${l}</li>`).join('');
   $('result').hidden = false;
+  if (r.ok) CG.happy();
+  trackEvent('mission_result', { mission: MS.def && MS.def.id, ok: r.ok ? 1 : 0 });
+  portalBreak();
 }
 let diffId = store.get('diff', 'easy'), showFps = store.get('fps', '0') === '1';
 function frame(now) {
@@ -694,6 +703,8 @@ function frame(now) {
       mode = 'crash'; mapToggle(false);
       $('crashWhy').textContent = sim.crashed + '.';
       $('crash').hidden = false; $('ui').hidden = true;
+      trackEvent('crash', { ac: acId });
+      portalBreak();
     } else if (MS.state === 'done' || MS.state === 'failed') showResult();
   } else if (mode === 'result' && !sim.crashed) {
     // planet rullar ut efter uppdraget
@@ -738,5 +749,6 @@ try { if ('serviceWorker' in navigator && location.protocol === 'https:' && wind
   msg.textContent = 'Loading terrain…';
   await ensureTerrain(sim.pos.clone(), p => { bar.style.width = Math.round(55 + p * 45) + '%'; });
   showMenu();
+  window.__afReady = true; CG.loadingStop();
   requestAnimationFrame(frame);
 })();

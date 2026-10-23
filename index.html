@@ -86,6 +86,8 @@
   <div class="panel">
     <div class="brand"><b>EFMA</b><i>ÅLANDSFLYG</i></div>
     <p class="lede">Fly over Åland and the Stockholm and Turku archipelagos in a bush plane, a seaplane, a Fokker 50-style turboprop, an A320-style airliner or an air ambulance helicopter.</p>
+    <button class="go tutgo quickgo" id="quickGo">Fly now <span>→</span></button>
+    <p class="quickSub">Straight into the air on final approach to Mariehamn. Land on the runway for three stars.</p>
     <button class="go tutgo" id="tutGo" hidden>New here? Take the first flight <span>→</span></button>
     <div class="tabs" role="tablist">
       <button class="tab" id="tabFree" role="tab">Free flight</button>
@@ -200,9 +202,15 @@
     </div>
   </div>
 </div>
+<div id="consent" hidden>
+  <span>Can we count visits with Google Analytics? No ads, just aggregate stats.</span>
+  <button class="chip" id="consentYes">OK</button>
+  <button class="ghost" id="consentNo">No thanks</button>
+</div>
 <!--/BODY-->
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/portal.js"></script>
+<script src="vendor/three.min.js"></script>
 <script src="js/data.js"></script>
 <script src="js/world.js"></script>
 <script src="js/physics.js"></script>
