@@ -8,7 +8,7 @@ const PORTAL = /[?&]portal=1/.test(location.search) ||
   !(/github\.io$/.test(location.hostname) || /alandsflyg/.test(location.hostname) ||
     location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:');
 
-const GA_MEASUREMENT_ID = 'G-XXXXXXXXXX';   // TODO: klistra in Ålandsflygs GA4-ID
+const GA_MEASUREMENT_ID = 'G-QJSG7VF2G2';
 
 /* ---------- CrazyGames SDK shim (portal build) ----------
    Works on CrazyGames and degrades to no-ops anywhere else.
