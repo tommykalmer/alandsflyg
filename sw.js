@@ -1,10 +1,10 @@
 // Ålandsflyg service worker: sparar spelet lokalt så att det startar snabbt och fungerar offline.
 // Höj versionen när filerna ändras så att gamla cachar rensas.
-const CACHE = 'alandsflyg-v8';
+const CACHE = 'alandsflyg-v9';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/data.js', 'js/world.js', 'js/physics.js', 'js/scene.js', 'js/terrain.js', 'js/daynight.js', 'js/weather.js',
-  'js/route.js', 'js/cockpit.js', 'js/missions.js', 'js/map.js', 'js/hud.js', 'js/app.js', 'js/portal.js',
+  'js/route.js', 'js/cockpit.js', 'js/missions.js', 'js/map.js', 'js/hud.js', 'js/audio.js', 'js/app.js', 'js/portal.js',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png',
   // kartdata (vägar och byggnader i rutor sparas när man flyger över dem)
   'data/lc_core.bin', 'data/h_core.bin', 'data/lc_reg.bin', 'data/h_reg.bin', 'data/roads_core.bin', 'data/roads_reg.bin', 'data/pois.json', 'data/t/index.json',

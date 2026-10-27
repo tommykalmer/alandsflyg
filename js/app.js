@@ -1,4 +1,4 @@
-// ===================== APP: meny, kontroller, kamera, ljud, huvudloop =====================
+// ===================== APP: meny, kontroller, kamera, huvudloop (ljudet finns i audio.js) =====================
 const $ = id => document.getElementById(id);
 const store = {
   get(k, d) { try { const v = localStorage.getItem('alandsflyg.' + k); return v == null ? d : v; } catch (e) { return d; } },
@@ -415,73 +415,7 @@ function updateCamera(dt) {
   setNear(A.chase[2] > 30 ? 3 : 1.5);
 }
 
-// ---------- ljud ----------
-const AU = { on: store.get('sound', '1') === '1', ctx: null };
-function audioInit() {
-  if (AU.ctx) { if (AU.ctx.resume) AU.ctx.resume(); return; }
-  try {
-    const C = new (window.AudioContext || window.webkitAudioContext)();
-    const master = C.createGain(); master.gain.value = 0.55; master.connect(C.destination);
-    const buf = C.createBuffer(1, C.sampleRate * 2, C.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-    const noise = C.createBufferSource(); noise.buffer = buf; noise.loop = true;
-    const bp = C.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.8;
-    const gN = C.createGain(); gN.gain.value = 0; noise.connect(bp).connect(gN).connect(master);
-    const lpW = C.createBiquadFilter(); lpW.type = 'lowpass'; lpW.frequency.value = 500;
-    const gW = C.createGain(); gW.gain.value = 0; noise.connect(lpW).connect(gW).connect(master);
-    const osc = C.createOscillator(); osc.type = 'sawtooth';
-    const lp = C.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
-    const gO = C.createGain(); gO.gain.value = 0; osc.connect(lp).connect(gO).connect(master);
-    const whine = C.createOscillator(); whine.type = 'sine';
-    const gWh = C.createGain(); gWh.gain.value = 0; whine.connect(gWh).connect(master);
-    const horn = C.createOscillator(); horn.type = 'square'; horn.frequency.value = 880;
-    const gHo = C.createGain(); gHo.gain.value = 0; horn.connect(gHo).connect(master);
-    noise.start(); osc.start(); whine.start(); horn.start();
-    Object.assign(AU, { ctx: C, master, bp, gN, gW, osc, lp, gO, whine, gWh, gHo });
-  } catch (e) { AU.ctx = null; }
-}
-function updateAudio() {
-  if (!AU.ctx) return;
-  const t = AU.ctx.currentTime, on = AU.on && mode === 'fly' && !paused, S = sim, A = S.ac, k = 0.12;
-  AU.master.gain.setTargetAtTime(on ? 0.55 : 0, t, 0.08);
-  if (A.heli) {
-    // rotorns bladslag och turbinen
-    const tq = (S.tq || 0) / 100, rr = model ? clamp(model.rps / 6.4, 0, 1) : 1;
-    AU.osc.frequency.setTargetAtTime(Math.max(3, 25.6 * rr), t, k);
-    AU.gO.gain.setTargetAtTime((0.14 + tq * 0.24) * rr, t, k);
-    AU.lp.frequency.setTargetAtTime(150 + tq * 300, t, k);
-    AU.bp.frequency.setTargetAtTime(700 + tq * 400, t, k);
-    AU.gN.gain.setTargetAtTime((0.05 + tq * 0.08) * rr, t, k);
-    AU.whine.frequency.setTargetAtTime(3300 + rr * 900, t, k);
-    AU.gWh.gain.setTargetAtTime(0.014 * rr, t, k);
-  } else if (A.cls === 'tp') {
-    // turboprop: konstantvarvspropellrar (jämn ton) och turbinvisslan
-    AU.osc.frequency.setTargetAtTime(92 + S.thr * 18 + S.V * 0.05, t, k);
-    AU.gO.gain.setTargetAtTime(0.06 + S.thr * 0.16, t, k);
-    AU.lp.frequency.setTargetAtTime(380 + S.thr * 700, t, k);
-    AU.bp.frequency.setTargetAtTime(500 + S.thr * 900, t, k);
-    AU.gN.gain.setTargetAtTime(0.06 + S.thr * 0.2, t, k);
-    AU.whine.frequency.setTargetAtTime(2600 + S.thr * 900, t, k);
-    AU.gWh.gain.setTargetAtTime(0.01 + S.thr * 0.012, t, k);
-  } else if (A.prop) {
-    const rpm = 0.35 + S.thr * 0.65;
-    AU.osc.frequency.setTargetAtTime(48 + rpm * 70 + S.V * 0.2, t, k);
-    AU.gO.gain.setTargetAtTime(0.1 + rpm * 0.22, t, k);
-    AU.lp.frequency.setTargetAtTime(260 + rpm * 520, t, k);
-    AU.bp.frequency.setTargetAtTime(250 + rpm * 300, t, k);
-    AU.gN.gain.setTargetAtTime(0.05 + rpm * 0.12, t, k);
-    AU.gWh.gain.setTargetAtTime(0, t, k);
-  } else {
-    AU.gO.gain.setTargetAtTime(0.02, t, k); AU.osc.frequency.setTargetAtTime(40, t, k);
-    AU.bp.frequency.setTargetAtTime(380 + S.n1 * 1500, t, k);
-    AU.gN.gain.setTargetAtTime(0.06 + S.n1 * 0.32, t, k);
-    AU.whine.frequency.setTargetAtTime(1300 + S.n1 * 2600, t, k);
-    AU.gWh.gain.setTargetAtTime(0.008 + S.n1 * 0.02, t, k);
-  }
-  AU.gW.gain.setTargetAtTime(clamp(S.V / 90, 0, 1) * 0.22, t, k);
-  const warn = HUDSTATE.stallWarn && Math.floor(performance.now() / 180) % 2 === 0;
-  AU.gHo.gain.setTargetAtTime(warn ? 0.035 : 0, t, 0.02);
-}
+// ---------- ljud: se js/audio.js ----------
 
 // ---------- visuellt ----------
 function updateVisuals(dt) {

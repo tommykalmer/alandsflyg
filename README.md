@@ -18,6 +18,7 @@ A browser flight simulator over Åland and the Stockholm and Turku archipelagos.
 - Installable web app (PWA): add it to the home screen for full screen and offline play.
 - Weather: clear, scattered clouds, overcast, rain or low fog. Under the cloud layer it is grey and hazy (with rain streaks in rain), inside the cloud you fly on instruments, and above it you come out into sunshine over a sea of clouds. Turbulence in and below the clouds.
 - Six times of day from dawn to night, with lit airports (edge, centreline, touchdown-zone and approach lights), towns, roads, lighthouses and ships.
+- Sound modelled on the real aircraft: the Beaver's nine-cylinder radial with exhaust crackle, afterfire pops and a propeller that snarls at full power; the turboprop's six-blade drone with the two propellers beating against each other; the airliner's fan tone, buzz-saw at take-off power and jet roar; the helicopter's blade slap that hardens in descent. Tyres chirp as they spin up at touchdown (left and right main separately), centreline lights thump under the nose wheel, the gear clunks into its locks, flaps run (the Beaver pumps them by hand), spoilers rumble, brakes squeal, and stall warnings sound like the real types (horn, stick shaker, cricket).
 - Runways are painted into the terrain and outlined in the HUD at a distance, so they are easy to find.
 
 ## Files
@@ -38,7 +39,8 @@ A browser flight simulator over Åland and the Stockholm and Turku archipelagos.
 | `js/missions.js` | The missions |
 | `js/map.js` | The map |
 | `js/hud.js` | HUD: speed, altitude, heading, horizon, warnings |
-| `js/app.js` | Menu, controls, camera, sound, performance and main loop |
+| `js/audio.js` | Sound: engines synthesised in an AudioWorklet (radial piston, turboprops, turbofans, rotor), wind, tyres, gear, flaps, spoilers, brakes, rain and warnings |
+| `js/app.js` | Menu, controls, camera, performance and main loop |
 | `data/` | Map data (generated): land cover and elevation grids, roads, points of interest, and `t/` tiles with buildings and small roads |
 | `coast/build_map.py`, `coast/build_osm.py` | Scripts that build `data/` and `js/data.js` from the source data |
 | `manifest.webmanifest`, `sw.js` | Web app manifest and service worker (installable, offline) |
