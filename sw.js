@@ -1,6 +1,6 @@
 // Ålandsflyg service worker: sparar spelet lokalt så att det startar snabbt och fungerar offline.
 // Höj versionen när filerna ändras så att gamla cachar rensas.
-const CACHE = 'alandsflyg-v9';
+const CACHE = 'alandsflyg-v10';
 const CORE = [
   './', 'index.html', 'manifest.webmanifest', 'css/style.css',
   'js/data.js', 'js/world.js', 'js/physics.js', 'js/scene.js', 'js/terrain.js', 'js/daynight.js', 'js/weather.js',

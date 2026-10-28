@@ -264,7 +264,7 @@ const act = {
   },
   cam() { camMode = camMode === 'chase' ? 'cockpit' : camMode === 'cockpit' ? 'hud' : 'chase'; store.set('cam', camMode); camInit = false; syncButtons(); },
   pause() { if (mode === 'fly') { paused = !paused; if (paused) CG.stop(); else CG.start(); syncButtons(); } },
-  sound() { AU.on = !AU.on; store.set('sound', AU.on ? '1' : '0'); syncButtons(); },
+  sound() { AU.on = !AU.on; store.set('sound', AU.on ? '1' : '0'); if (AU.on) audioInit(); syncButtons(); },
   map() { if (mode === 'fly') mapToggle(); },
   spd() { if (sim && sim.ac.spoilers) { sim.speedbrake = !sim.speedbrake; syncButtons(); } },
   assist() {

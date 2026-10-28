@@ -179,7 +179,23 @@ registerProcessor('af-engine', AFEngine);
 `;
 function auWorkletURL() { return URL.createObjectURL(new Blob([AF_WORKLET], { type: 'application/javascript' })); }
 
+// iPhone: Web Audio räknas annars som "ringsignal" och tystas av ljudlöst-knappen (hörlurar spelar ändå).
+// audioSession 'playback' (iOS 17+) och ett tyst <audio>-element (äldre iOS) gör att spelet låter som video/musik.
+function auUnmuteIOS() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  try {
+    if (!AU.tag && /iP(hone|ad|od)|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document) {
+      const n = 4410, b = new Uint8Array(44 + n * 2), v = new DataView(b.buffer), w = (o, x) => { for (let i = 0; i < x.length; i++) b[o + i] = x.charCodeAt(i); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, 44100, true); v.setUint32(28, 88200, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      const a = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' }))); a.loop = true; a.setAttribute('playsinline', ''); a.volume = 0.01;
+      AU.tag = a;
+    }
+    if (AU.tag && AU.tag.paused) { const p = AU.tag.play(); if (p && p.catch) p.catch(() => {}); }
+  } catch (e) {}
+}
 function audioInit() {
+  auUnmuteIOS();
   if (AU.ctx) { try { AU.ctx.resume(); } catch (e) {} return; }
   try {
     const C = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
@@ -191,19 +207,39 @@ function auBuild(C, dest) {
   AU.ctx = C;
   const comp = C.createDynamicsCompressor();
   comp.threshold.value = -16; comp.knee.value = 12; comp.ratio.value = 3.5; comp.attack.value = 0.005; comp.release.value = 0.25;
-  comp.connect(dest || C.destination);
+  // slutbegränsare: inga toppar över full skala, även när låsningar och sättning sammanfaller
+  const lim = C.createWaveShaper(), lc = new Float32Array(2048);
+  for (let i = 0; i < 2048; i++) { const x = (i / 1023.5 - 1) * 1.6, ax = Math.abs(x); lc[i] = ax < 0.75 ? x : Math.sign(x) * (0.75 + 0.23 * Math.tanh((ax - 0.75) / 0.23)); }
+  lim.curve = lc;
+  const pre = C.createGain(); pre.gain.value = 1 / 1.6;
+  comp.connect(pre); pre.connect(lim); lim.connect(dest || C.destination);
   const master = C.createGain(); master.gain.value = 0; master.connect(comp);
-  const fx = C.createGain(); fx.connect(master);
+  // telefonens högtalare återger knappt något under 250 Hz: skapa övertoner av basen (som "virtuell bas" i musik)
+  try {
+    const phone = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    const bl = C.createBiquadFilter(); bl.type = 'lowpass'; bl.frequency.value = 180; bl.Q.value = 0.7;
+    const pre = C.createGain(); pre.gain.value = 6;
+    const ws = C.createWaveShaper(), cv = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; cv[i] = Math.tanh(x * 2.5) * 0.8 + 0.25 * x * x; }
+    ws.curve = cv;
+    const bh = C.createBiquadFilter(); bh.type = 'highpass'; bh.frequency.value = 220; bh.Q.value = 0.7;
+    const bp2 = C.createBiquadFilter(); bp2.type = 'lowpass'; bp2.frequency.value = 1400; bp2.Q.value = 0.7;
+    const bg = C.createGain(); bg.gain.value = phone ? 0.5 : 0.18;
+    master.connect(bl); bl.connect(pre); pre.connect(ws); ws.connect(bh); bh.connect(bp2); bp2.connect(bg); bg.connect(comp);
+    AU.bass = bg;
+  } catch (e) {}
+  // engångsljuden (däck, ställ, klaffar) går förbi kompressorn så att de inte trycks ner av motorljudet
+  const fx = C.createGain(), fxm = C.createGain(); fxm.gain.value = 0; fx.connect(fxm); fxm.connect(pre);
   const crashBus = C.createGain(); crashBus.gain.value = 0.9; crashBus.connect(comp);
   // vitt och brunt brus (brunt för muller), fyra sekunder som loopar
   const len = C.sampleRate * 4, wb = C.createBuffer(1, len, C.sampleRate), bb = C.createBuffer(1, len, C.sampleRate);
   const w = wb.getChannelData(0), b = bb.getChannelData(0); let br = 0;
   for (let i = 0; i < len; i++) { w[i] = Math.random() * 2 - 1; br = (br + 0.02 * w[i]) / 1.02; b[i] = br * 3.5; }
-  Object.assign(AU, { comp, master, fx, crashBus, wb, bb, eng: null, st: null });
+  Object.assign(AU, { comp, master, fx, fxm, crashBus, wb, bb, eng: null, st: null });
   const osc = (type, f) => { const o = C.createOscillator(); o.type = type; o.frequency.value = f; o.start(); return o; };
   const tone = (src, fl) => { let n = src; for (const [type, f, q] of fl) { const bq = auF(type, f, q); n.connect(bq); n = bq; } const g = auG(); n.connect(g); g.connect(master); return g; };
   const sq = osc('sine', 2350), vib = osc('sine', 6.5), vg = C.createGain(); vg.gain.value = 40; vib.connect(vg).connect(sq.frequency);
-  const hyd = osc('sawtooth', 118), flap = osc('sawtooth', 320);
+  const hyd = osc('sawtooth', 380), flap = osc('sawtooth', 320);
   const h1 = osc('square', 1750), h2 = osc('square', 1763), hm = C.createGain(); hm.gain.value = 0.5; h1.connect(hm); h2.connect(hm);
   AU.L = {
     wind: auLoop(wb, [['bandpass', 800, 0.6]]),
@@ -216,10 +252,10 @@ function auBuild(C, dest) {
     water: auLoop(wb, [['highpass', 1400, 0.7]]),
     brake: auLoop(bb, [['lowpass', 130, 1]]),
     rain: auLoop(wb, [['highpass', 2600, 0.6]]),
-    hydN: auLoop(wb, [['bandpass', 1400, 2]]),
+    hydN: auLoop(wb, [['bandpass', 1600, 1.4]]),
     shake: auLoop(bb, [['bandpass', 55, 1.2]], [18, 'square']),
     squeal: { g: tone(sq, [['bandpass', 2350, 4]]) },
-    hyd: { g: tone(hyd, [['lowpass', 650, 0.8]]), o: hyd },
+    hyd: { g: tone(hyd, [['bandpass', 900, 1.1]]), o: hyd },
     flap: { g: tone(flap, [['bandpass', 700, 1.2]]), o: flap },
     horn: { g: tone(hm, [['bandpass', 1800, 3]]) }
   };
@@ -266,7 +302,12 @@ function auLegacy(p, t) {
   l.n.f.frequency.setTargetAtTime(nf, t, 0.1); l.n.g.gain.setTargetAtTime(na * p.g, t, 0.1);
 }
 // pausa ljudet när fliken inte syns
-document.addEventListener('visibilitychange', () => { if (!AU.ctx) return; try { if (document.hidden) AU.ctx.suspend(); else AU.ctx.resume(); } catch (e) {} });
+document.addEventListener('visibilitychange', () => {
+  if (!AU.ctx) return;
+  try { if (document.hidden) { AU.ctx.suspend(); if (AU.tag) AU.tag.pause(); } else { AU.ctx.resume(); auUnmuteIOS(); } } catch (e) {}
+});
+// första tryck var som helst låser upp ljudet (mobilwebbläsare kräver en användargest)
+document.addEventListener('pointerdown', function first() { if (!AU.on) return; audioInit(); document.removeEventListener('pointerdown', first, true); }, true);
 
 // ---------- engångsljud ----------
 function auOut(pan) {
@@ -293,17 +334,29 @@ function sChirp(t, a, pan, big) {
   const out = auOut(pan), dur = (big ? 0.18 : 0.12) + 0.25 * a, f0 = big ? 2300 : 2900, f1 = big ? 1100 : 1500;
   const n = auNz(t, dur + 0.05), bp = auF('bandpass', f0, 4), g = auG();
   bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + dur);
-  auEnv(g, t, a * 0.9, 0.005, dur); n.connect(bp).connect(g).connect(out);
+  auEnv(g, t, a * 7, 0.005, dur); n.connect(bp).connect(g).connect(out);
   const o = AU.ctx.createOscillator(), bo = auF('bandpass', big ? 1000 : 1300, 2), go = auG(); o.type = 'sawtooth';
   o.frequency.setValueAtTime(big ? 980 : 1250, t); o.frequency.exponentialRampToValueAtTime(big ? 640 : 900, t + dur);
-  auEnv(go, t, a * 0.16, 0.004, dur * 0.85); o.connect(bo).connect(go).connect(out); o.start(t); o.stop(t + dur + 0.05);
+  auEnv(go, t, a * 0.5, 0.004, dur * 0.85); o.connect(bo).connect(go).connect(out); o.start(t); o.stop(t + dur + 0.05);
   auNzShot(t + 0.01, out, a * 0.12, 0.03, dur * 2.2, [['highpass', 3500, 0.7]]);
 }
 function sClunk(t, a, pan) {
   const out = auOut(pan);
-  sThump(t, a, 55, 0.32, pan);
-  auNzShot(t, out, a * 0.5, 0.001, 0.09, [['bandpass', 1700, 7]]);
-  const o = AU.ctx.createOscillator(), g = auG(); o.frequency.value = 420; auEnv(g, t, a * 0.18, 0.001, 0.14); o.connect(g).connect(out); o.start(t); o.stop(t + 0.2);
+  sThump(t, a * 0.6, 55, 0.32, pan);
+  // smalbandigt brus är svagt i sig: höga faktorer behövs för att låsningen ska höras i en telefonhögtalare
+  auNzShot(t, out, a * 6, 0.001, 0.12, [['bandpass', 1700, 5]]);
+  auNzShot(t, out, a * 9, 0.001, 0.16, [['bandpass', 650, 2.5]]);
+  auNzShot(t, out, a * 5, 0.001, 0.07, [['bandpass', 1150, 1.5]]);
+  for (const [f, k, d] of [[260, 0.9, 0.22], [415, 1.0, 0.16], [1130, 0.45, 0.09]]) {
+    const o = AU.ctx.createOscillator(), g = auG(); o.frequency.value = f * (0.97 + 0.06 * Math.random());
+    auEnv(g, t, a * k, 0.001, d); o.connect(g).connect(out); o.start(t); o.stop(t + d + 0.05);
+  }
+}
+// stållspaken i cockpit: tydligt dubbelklack
+function sLever(t, a) {
+  sClick(t, a);
+  auNzShot(t, AU.fx, a * 8, 0.001, 0.06, [['bandpass', 900, 2]]);
+  const o = AU.ctx.createOscillator(), g = auG(); o.frequency.value = 520; auEnv(g, t, a * 0.25, 0.001, 0.07); o.connect(g).connect(AU.fx); o.start(t); o.stop(t + 0.1);
 }
 function sClick(t, a) {
   if (a < 0.003) return;
@@ -412,6 +465,7 @@ function auUpdate() {
   const dt = Math.min(Math.max((now - (AU.tPrev || now)) / 1000, 0), 0.1); AU.tPrev = now;
   const on = AU.on && mode === 'fly' && !paused && !!S;
   AU.master.gain.setTargetAtTime(on ? 0.9 : 0, t, on ? 0.15 : 0.06);
+  AU.fxm.gain.setTargetAtTime(on ? 0.62 : 0, t, on ? 0.15 : 0.06);
   if (!S) return;
   const st = auState(S), A = S.ac;
   if (S.crashed && !st.crashed) { st.crashed = true; if (AU.on) sCrash(t); }
@@ -491,14 +545,17 @@ function auUpdate() {
   // ställ: hydraulik och luckor, låsningarna slår i
   if (A.retract) {
     const mv = Math.abs(S.gearPos - st.gear) > 1e-6;
-    set(L.hyd.g.gain, mv ? 0.006 + 0.012 * ins : 0, 0.15); set(L.hydN.g.gain, mv ? 0.012 + 0.018 * ins : 0, 0.15);
-    set(L.hyd.o.frequency, mv ? 118 + 10 * Math.sin(now / 700) : 110, 0.2);
-    if (mv && !st.gearMv) sThump(t, 0.1 + 0.12 * ins, 90, 0.25, 0); // luckorna öppnas
-    if (S.gearPos >= 1 && st.gear < 1) for (let i = 0; i < 3; i++) sClunk(t + 0.05 + i * 0.13 + Math.random() * 0.06, (0.3 + 0.35 * ins) * (i ? 0.8 : 1), (i - 1) * 0.4);
-    if (S.gearPos <= 0 && st.gear > 0) { sClunk(t, 0.22 + 0.2 * ins, 0); sThump(t + 0.25, 0.12 + 0.1 * ins, 80, 0.3, 0); }
+    // hydraulpumpen vinar under hela rörelsen (åtta sekunder), stiger lite när den arbetar mot fartvinden
+    const work = mv ? 1 + 0.4 * Math.min(q, 1.5) : 0;
+    set(L.hyd.g.gain, mv ? (0.07 + 0.09 * ins) * work : 0, 0.15); set(L.hydN.g.gain, mv ? (0.06 + 0.07 * ins) * work : 0, 0.15);
+    set(L.hyd.o.frequency, mv ? 380 + 25 * Math.min(q, 1.5) + 8 * Math.sin(now / 500) : 340, 0.25);
+    if (mv && !st.gearMv) { sClunk(t + 0.15, 0.6 + 0.4 * ins, 0); sHiss(t + 0.1, 0.2 + 0.15 * ins, 0.7); } // upplåsningen släpper, luckorna öppnas
+    if (mv && st.gear > 0.25 && st.gear < 0.75 && Math.floor(st.gear * 4) !== Math.floor(S.gearPos * 4)) sClunk(t, 0.25 + 0.2 * ins, 0); // stället slår ut i luftströmmen
+    if (S.gearPos >= 1 && st.gear < 1) for (let i = 0; i < 3; i++) sClunk(t + 0.05 + i * 0.13 + Math.random() * 0.06, (0.75 + 0.5 * ins) * (i ? 0.8 : 1), (i - 1) * 0.4);
+    if (S.gearPos <= 0 && st.gear > 0) { sClunk(t, 0.75 + 0.4 * ins, 0); sClunk(t + 0.3, 0.55 + 0.3 * ins, 0); sHiss(t + 0.3, 0.06 + 0.05 * ins, 0.5); } // låst uppe, luckorna stänger
     st.gearMv = mv; st.gear = S.gearPos;
   }
-  if (S.gearDown !== st.gearDown) { sClick(t, 0.25 * (0.3 + ins)); st.gearDown = S.gearDown; }
+  if (S.gearDown !== st.gearDown) { sLever(t, 0.45 + 0.35 * ins); st.gearDown = S.gearDown; }
   // klaffar: Beavern pumpar för hand, de andra har motor
   const fmv = Math.abs((S.flapPos || 0) - (st.flapPos || 0)) > 1e-6;
   if (A.cls === 'ga') {
